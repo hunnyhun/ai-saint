@@ -1,0 +1,6 @@
+theme: jekyll-theme-cayman
+title: AI Saint
+description: Privacy Policy and Documentation for AI Saint
+show_downloads: false
+google_analytics:
+markdown: kramdown 
