@@ -3,84 +3,14 @@ import SwiftUI
 struct SidebarView: View {
     // MARK: - Properties
     let userStatusManager = UserStatusManager.shared
+    let notificationManager = NotificationManager.shared
     @Binding var showAuthView: Bool
     @Binding var selectedFeature: Models.Feature?
     let chatViewModel: ChatViewModel
     @State private var showPaywall = false
     @State private var showAccountMenu = false
     @State private var showSettings = false
-    
-    // MARK: - Computed Properties
-    // Fix filter predicate errors by using non-closure approach
-    private var todayChats: [ChatHistory] {
-        // Use manual filtering since Swift 6 has issues with filter closures in certain contexts
-        var result: [ChatHistory] = []
-        for chat in chatViewModel.chatHistory {
-            // Use timestamp instead of lastUpdate to match ChatHistory model property
-            if Calendar.current.isDateInToday(chat.timestamp) {
-                result.append(chat)
-            }
-        }
-        // Sort by timestamp descending (newest first)
-        return result.sorted { $0.timestamp > $1.timestamp }
-    }
-    
-    private var yesterdayChats: [ChatHistory] {
-        // Use manual filtering since Swift 6 has issues with filter closures in certain contexts
-        var result: [ChatHistory] = []
-        for chat in chatViewModel.chatHistory {
-            // Use timestamp instead of lastUpdate to match ChatHistory model property
-            if Calendar.current.isDateInYesterday(chat.timestamp) {
-                result.append(chat)
-            }
-        }
-        // Sort by timestamp descending (newest first)
-        return result.sorted { $0.timestamp > $1.timestamp }
-    }
-    
-    private var lastWeekChats: [ChatHistory] {
-        // Use manual filtering since Swift 6 has issues with filter closures in certain contexts
-        var result: [ChatHistory] = []
-        let calendar = Calendar.current
-        let now = Date()
-        
-        for chat in chatViewModel.chatHistory {
-            // Check if date is within last week but not today or yesterday
-            if let weekAgo = calendar.date(byAdding: .day, value: -7, to: now) {
-                let isInLastWeek = !calendar.isDateInToday(chat.timestamp) && 
-                                  !calendar.isDateInYesterday(chat.timestamp) &&
-                                  chat.timestamp >= weekAgo && 
-                                  chat.timestamp <= now
-                
-                if isInLastWeek {
-                    result.append(chat)
-                }
-            }
-        }
-        print("DEBUG: Found \(result.count) chats from last week")
-        // Sort by timestamp descending (newest first)
-        return result.sorted { $0.timestamp > $1.timestamp }
-    }
-    
-    private var olderChats: [ChatHistory] {
-        // Use manual filtering since Swift 6 has issues with filter closures in certain contexts
-        var result: [ChatHistory] = []
-        let calendar = Calendar.current
-        let now = Date()
-        
-        for chat in chatViewModel.chatHistory {
-            // Check if date is older than a week
-            if let weekAgo = calendar.date(byAdding: .day, value: -7, to: now) {
-                if !calendar.isDateInToday(chat.timestamp) && 
-                   !calendar.isDateInYesterday(chat.timestamp) &&
-                   chat.timestamp < weekAgo {
-                    result.append(chat)
-                }
-            }
-        }
-        // Sort by timestamp descending (newest first)
-        return result.sorted { $0.timestamp > $1.timestamp }
-    }
+    @State private var showDailyQuote = false
     
     // MARK: - Body
     var body: some View {
@@ -94,7 +24,7 @@ struct SidebarView: View {
                     HStack {
                         Image(systemName: "star.circle.fill")
                             .foregroundColor(.yellow)
-                        Text("Upgrade to Premium")
+                        Text("upgradeToPremiumButton".localized)
                             .bold()
                         Spacer()
                         Image(systemName: "chevron.right")
@@ -109,6 +39,50 @@ struct SidebarView: View {
                 .padding(.top, 8)
             }
             
+            // Daily Quote Button
+            Button(action: {
+                // Clear notification count before showing view
+                if notificationManager.unreadNotificationCount > 0 {
+                    print("📱 [SidebarView] Clearing \(notificationManager.unreadNotificationCount) notifications")
+                    notificationManager.markNotificationsAsRead()
+                }
+                
+                // Then show the daily quote view
+                print("📱 [SidebarView] Opening Daily Quote view")
+                showDailyQuote = true
+            }) {
+                HStack {
+                    Image(systemName: "quote.bubble.fill")
+                        .foregroundColor(.yellow)
+                    Text("dailySpiritualQuote".localized)
+                        .bold()
+                    Spacer()
+                    
+                    // Badge showing unread notification count
+                    if notificationManager.unreadNotificationCount > 0 {
+                        ZStack {
+                            Circle()
+                                .fill(Color.red)
+                                .frame(width: 22, height: 22)
+                            
+                            Text("\(notificationManager.unreadNotificationCount)")
+                                .font(.caption2)
+                                .bold()
+                                .foregroundColor(.white)
+                        }
+                    }
+                    
+                    Image(systemName: "chevron.right")
+                        .foregroundColor(.gray)
+                }
+                .foregroundColor(.primary)
+                .padding()
+                .background(Color(.secondarySystemBackground))
+                .cornerRadius(10)
+                .padding(.horizontal)
+            }
+            .padding(.top, 8)
+            
             // Chat history section with headers like ChatGPT
             VStack(spacing: 0) {
                 // Chat history list
@@ -122,42 +96,14 @@ struct SidebarView: View {
                             }
                             .padding()
                         } else if chatViewModel.chatHistory.isEmpty {
-                            Text("No chats yet")
+                            Text("noChatsYet".localized)
                                 .foregroundColor(.gray)
                                 .padding()
                         } else {
-                            // Show today's chats
-                            Section(header: sectionHeader(title: "Today")) {
-                                ForEach(todayChats) { history in
-                                    chatHistoryRow(history: history)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                }
-                            }
-                            
-                            // Yesterday section if there are chats
-                            if !yesterdayChats.isEmpty {
-                                Section(header: sectionHeader(title: "Yesterday")) {
-                                    ForEach(yesterdayChats) { history in
-                                        chatHistoryRow(history: history)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                    }
-                                }
-                            }
-                            
-                            // Last Week section
-                            if !lastWeekChats.isEmpty {
-                                Section(header: sectionHeader(title: "Last Week")) {
-                                    ForEach(lastWeekChats) { history in
-                                        chatHistoryRow(history: history)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                    }
-                                }
-                            }
-                            
-                            // Earlier chats
-                            if !olderChats.isEmpty {
-                                Section(header: sectionHeader(title: "Earlier")) {
-                                    ForEach(olderChats) { history in
+                            // Display sections using our new sectionedHistory property
+                            ForEach(chatViewModel.sectionedHistory, id: \.section.id) { section in
+                                Section(header: sectionHeader(title: section.section.rawValue)) {
+                                    ForEach(section.conversations) { history in
                                         chatHistoryRow(history: history)
                                             .frame(maxWidth: .infinity, alignment: .leading)
                                     }
@@ -178,94 +124,76 @@ struct SidebarView: View {
                 if userStatusManager.state.isAuthenticated {
                     HStack {
                         // User avatar
-                        ZStack {
-                            Circle()
-                                .fill(Color.blue.opacity(0.2))
-                                .frame(width: 36, height: 36)
-                            
-                            Text(userInitials)
-                                .font(.system(size: 16, weight: .medium))
-                                .foregroundColor(.blue)
-                        }
+                        Circle()
+                            .fill(Color.blue.opacity(0.2))
+                            .frame(width: 36, height: 36)
+                            .overlay(
+                                Text(userStatusManager.state.userEmail?.prefix(1).uppercased() ?? "U")
+                                    .font(.system(size: 18, weight: .bold))
+                                    .foregroundColor(.blue)
+                            )
                         
-                        // User name/email display
-                        if let email = userStatusManager.state.userEmail {
-                            Text(email.split(separator: "@").first ?? "")
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                                .foregroundColor(.primary)
+                        VStack(alignment: .leading, spacing: 2) {
+                            // User email text with overflow handling
+                            if let email = userStatusManager.state.userEmail {
+                                Text(email)
+                                    .font(.footnote)
+                                    .lineLimit(1)
+                                    .foregroundColor(.primary)
+                            }
+                            
+                            // Subscription tier
+                            Text(userStatusManager.state.subscriptionTier.displayText.capitalized)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     
                     Spacer()
                     
-                    // Settings dots
+                    // Settings button
                     Button(action: {
                         showSettings = true
                     }) {
-                        Image(systemName: "ellipsis")
-                            .font(.system(size: 20))
+                        Image(systemName: "gearshape.fill")
+                            .font(.system(size: 18))
                             .foregroundColor(.gray)
                             .padding(8)
-                    }
-                } else {
-                    Button(action: { showAuthView = true }) {
-                        HStack {
-                            Image(systemName: "person.fill.badge.plus")
-                                .font(.title3)
-                            Text("Sign In")
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                        }
-                        .foregroundColor(.blue)
+                            .background(Circle().fill(Color(.systemBackground)))
                     }
                 }
             }
-            .padding(.horizontal)
+            .padding(.horizontal, 16)
             .padding(.vertical, 12)
-            .background(Color(.systemBackground))
+            .background(Color(.secondarySystemBackground))
         }
         .background(Color(.systemBackground))
-        .sheet(isPresented: $showPaywall) {
-            PaywallView()
-        }
         .sheet(isPresented: $showSettings) {
             SettingsView(showPaywall: $showPaywall)
         }
+        .sheet(isPresented: $showPaywall) {
+            PaywallView()
+        }
+        .sheet(isPresented: $showDailyQuote) {
+            DailyQuoteView(fromNotification: false)
+        }
     }
     
-    // MARK: - Helper Views and Methods
-    
-    // Section header for consistent styling
+    // MARK: - Section Header
     private func sectionHeader(title: String) -> some View {
-        Text(title)
-            .font(.subheadline)
-            .foregroundColor(.gray)
+        // Use localized string - this will use the rawValue as a key in the strings files
+        Text(title.localized)
+            .font(.caption)
+            .fontWeight(.medium)
+            .foregroundColor(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal)
-            .padding(.top, 20)
-            .padding(.bottom, 8)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
             .background(Color(.systemBackground))
     }
     
-    // Get user initials for avatar
-    private var userInitials: String {
-        guard let email = userStatusManager.state.userEmail,
-              let firstPart = email.split(separator: "@").first else {
-            return "U"
-        }
-        
-        let components = firstPart.split(separator: ".")
-        if components.count > 1 {
-            let first = components[0].prefix(1)
-            let second = components[1].prefix(1)
-            return "\(first)\(second)".uppercased()
-        } else {
-            return String(firstPart.prefix(2)).uppercased()
-        }
-    }
-    
-    // Chat history row
+    // MARK: - Chat History Row
     private func chatHistoryRow(history: ChatHistory) -> some View {
         Button(action: {
             print("DEBUG: Loading conversation: \(history.id)")

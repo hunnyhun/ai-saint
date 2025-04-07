@@ -7,33 +7,35 @@ enum MessageType {
 }
 
 // MARK: - Chat Message
-struct ChatMessage: Identifiable, Codable {
+struct ChatMessage: Identifiable, Codable, Hashable {
     let id: String
     let text: String
     let isUser: Bool
     let timestamp: Date
     
-    // Debug helper
+    // Computed property for debugging
     var debugDescription: String {
-        "Message(id: \(id), isUser: \(isUser), text: \(text))"
+        return "Message(id: \(id), isUser: \(isUser), text: \(text.prefix(20))..., timestamp: \(timestamp))"
     }
     
-    // MARK: - Equatable Implementation
+    // For Hashable
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+    
+    // For Equatable
     static func == (lhs: ChatMessage, rhs: ChatMessage) -> Bool {
-        // Debug: Comparing ChatMessage objects
-        print("Comparing messages - LHS id: \(lhs.id), RHS id: \(rhs.id)")
-        return lhs.id == rhs.id &&
-               lhs.text == rhs.text &&
-               lhs.isUser == rhs.isUser &&
-               lhs.timestamp == rhs.timestamp
+        return lhs.id == rhs.id
     }
     
-    // MARK: - Initialization
-    init(id: String = UUID().uuidString, text: String, isUser: Bool, timestamp: Date) {
-        self.id = id
-        self.text = text
-        self.isUser = isUser
-        self.timestamp = timestamp
+    // For JSON conversion
+    func toDictionary() -> [String: Any] {
+        return [
+            "id": id,
+            "text": text,
+            "isUser": isUser,
+            "timestamp": timestamp.timeIntervalSince1970
+        ]
     }
 }
 
@@ -41,12 +43,26 @@ struct ChatMessage: Identifiable, Codable {
 struct ChatHistory: Identifiable, Codable {
     let id: String
     let title: String
-    let lastMessage: String
     let timestamp: Date
     let messages: [ChatMessage]
     
-    // Debug helper
+    // Computed property for debugging
     var debugDescription: String {
-        "ChatHistory(id: \(id), title: \(title), messageCount: \(messages.count))"
+        return "ChatHistory(id: \(id), title: \(title), messages: \(messages.count))"
+    }
+    
+    // Computed property for last message
+    var lastMessage: String {
+        return messages.last?.text.prefix(30).appending(messages.last?.text.count ?? 0 > 30 ? "..." : "") ?? "No messages"
+    }
+    
+    // For JSON conversion
+    func toDictionary() -> [String: Any] {
+        return [
+            "id": id,
+            "title": title,
+            "timestamp": timestamp.timeIntervalSince1970,
+            "messages": messages.map { $0.toDictionary() }
+        ]
     }
 } 

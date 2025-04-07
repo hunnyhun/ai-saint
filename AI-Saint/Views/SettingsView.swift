@@ -1,110 +1,46 @@
 import SwiftUI
+import UserNotifications
+import UIKit
 
 struct SettingsView: View {
-    let userStatusManager = UserStatusManager.shared
     @Environment(\.dismiss) private var dismiss
     @Binding var showPaywall: Bool
-    @State private var hapticFeedbackEnabled = true
-    @State private var autoCorrectEnabled = true
+    
+    // Environment objects
+    let userStatusManager = UserStatusManager.shared
+    let notificationManager = NotificationManager.shared
+    let localizationManager = LocalizationManager.shared
     
     var body: some View {
         NavigationView {
-            List {
-                Section("ACCOUNT") {
-                    if let email = userStatusManager.state.userEmail {
+            Form {
+                // MARK: - User Section
+                userSection
+                
+                // MARK: - App Section
+                Section("app".localized) {
+                    // Notification toggle - uses custom permission flow
+                    notificationsSection
+                    
+                    // Language settings button
+                    Button {
+                        openLanguageSettings()
+                    } label: {
                         HStack {
-                            Image(systemName: "envelope")
-                            Text("Email")
+                            Image(systemName: "globe")
+                            Text("language".localized)
                             Spacer()
-                            Text(email)
+                            Text(localizationManager.getCurrentLanguageDisplayName())
+                                .foregroundColor(.gray)
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
                                 .foregroundColor(.gray)
                         }
                     }
-                    
-                    HStack {
-                        Image(systemName: "star")
-                        Text("Subscription")
-                        Spacer()
-                        Text(userStatusManager.state.subscriptionTier.displayText.capitalized)
-                            .foregroundColor(.gray)
-                    }
-                    
-                    if !userStatusManager.state.isPremium {
-                        Button(action: {
-                            dismiss()
-                            showPaywall = true
-                        }) {
-                            Label("Upgrade to Plus", systemImage: "arrow.up.circle")
-                        }
-                    }
-                    
-                    Button(action: {
-                        // Handle restore purchases
-                    }) {
-                        Label("Restore purchases", systemImage: "arrow.clockwise")
-                    }
+                    .accessibilityHint("openSettings".localized)
                 }
                 
-                Section("APP") {
-                    HStack {
-                        Image(systemName: "globe")
-                        Text("App Language")
-                        Spacer()
-                        Text("English")
-                            .foregroundColor(.gray)
-                        Image(systemName: "chevron.right")
-                            .foregroundColor(.gray)
-                            .font(.caption)
-                    }
-                    
-                    HStack {
-                        Image(systemName: "paintbrush")
-                        Text("Theme")
-                        Spacer()
-                        Text("Catholic")
-                            .foregroundColor(.purple)
-                        Image(systemName: "chevron.down")
-                            .foregroundColor(.gray)
-                            .font(.caption)
-                    }
-                    
-                    Toggle(isOn: $hapticFeedbackEnabled) {
-                        Label("Haptic Feedback", systemImage: "iphone.radiowaves.left.and.right")
-                    }
-                    
-                    Toggle(isOn: $autoCorrectEnabled) {
-                        Label("Correct Spelling Automatically", systemImage: "textformat.abc")
-                    }
-
-                    Toggle(isOn: .constant(true)) {
-                        Label("Private Mode", systemImage: "lock.fill")
-                    }
-                    .disabled(true)
-                }
-
-                Section("CONFESSION") {
-                    HStack {
-                        Image(systemName: "cross.fill")
-                        Text("Prayer Language")
-                        Spacer()
-                        Text("Traditional")
-                            .foregroundColor(.gray)
-                        Image(systemName: "chevron.right")
-                            .foregroundColor(.gray)
-                            .font(.caption)
-                    }
-                    
-                    Toggle(isOn: .constant(true)) {
-                        Label("Anonymous Mode", systemImage: "person.fill.questionmark")
-                    }
-                    .disabled(true)
-                    
-                    Toggle(isOn: .constant(true)) {
-                        Label("Clear History After Session", systemImage: "trash.fill")
-                    }
-                    .disabled(true)
-                }
-                
+                // MARK: - Sign Out Section
                 Section {
                     Button(role: .destructive) {
                         Task {
@@ -118,22 +54,106 @@ struct SettingsView: View {
                     } label: {
                         HStack {
                             Spacer()
-                            Text("Sign Out")
+                            Text("signOut".localized)
                             Spacer()
                         }
                     }
                 }
             }
-            .navigationTitle("Settings")
+            .navigationTitle("settings".localized)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
+                    Button("done".localized) {
                         dismiss()
                     }
                 }
             }
+            .onAppear {
+                // Check notification status when view appears
+                Task {
+                    // Rule: Always add debug logs
+                    print("📱 [SettingsView] View appeared, checking notification status")
+                    
+                    // Always force check the actual system notification status
+                    let isEnabled = await notificationManager.checkNotificationStatus()
+                    
+                    // Debug log the current state after checking
+                    print("📱 [SettingsView] After system check: isEnabled=\(isEnabled), manager.isEnabled=\(notificationManager.isNotificationsEnabled)")
+                }
+            }
         }
+    }
+    
+    // MARK: - User Section View
+    private var userSection: some View {
+        Section {
+            HStack(spacing: 12) {
+                // User avatar
+                Image(systemName: "person.circle.fill")
+                    .font(.system(size: 40))
+                    .foregroundColor(.gray)
+                
+                // User info
+                VStack(alignment: .leading, spacing: 2) {
+                    if let email = userStatusManager.state.userEmail {
+                        Text(email)
+                            .font(.headline)
+                    } else {
+                        Text("anonymousUser".localized)
+                            .font(.headline)
+                    }
+                    
+                    Text(userStatusManager.state.isPremium ? "premium".localized : "freeAccount".localized)
+                        .font(.subheadline)
+                        .foregroundColor(userStatusManager.state.isPremium ? .green : .secondary)
+                }
+                
+                Spacer()
+            }
+            .padding(.vertical, 8)
+        }
+    }
+    
+    // MARK: - Notifications Section
+    private var notificationsSection: some View {
+        Button {
+            openSystemSettings()
+        } label: {
+            HStack {
+                Image(systemName: "bell.fill")
+                Text("notificationPreferences".localized)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+            }
+        }
+        .onAppear {
+            Task {
+                // Check current notification status
+                await notificationManager.checkNotificationStatus()
+            }
+        }
+    }
+    
+    // MARK: - Open System Settings
+    private func openSystemSettings() {
+        // Rule: Always add debug logs
+        print("📱 [SettingsView] Opening system settings app")
+        
+        if let url = URL(string: UIApplication.openSettingsURLString) {
+            UIApplication.shared.open(url)
+        }
+    }
+    
+    // MARK: - Open Language Settings
+    private func openLanguageSettings() {
+        // Rule: Always add debug logs
+        print("📱 [SettingsView] Opening language settings in system app")
+        
+        // Use the localization manager to open language settings
+        localizationManager.openLanguageSettings()
     }
 }
 

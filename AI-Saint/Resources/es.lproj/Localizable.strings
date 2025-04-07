@@ -1,0 +1,70 @@
+/* 
+  Localizable.strings
+  AI-Saint
+*/
+
+// MARK: - Common UI Elements
+"settings" = "Configuración";
+"language" = "Idioma";
+"done" = "Listo";
+"cancel" = "Cancelar";
+"signOut" = "Cerrar Sesión";
+"appTitle" = "AI Saint";
+"premium" = "Suscripción Premium";
+"freeAccount" = "Cuenta Gratuita";
+"anonymousUser" = "Usuario Anónimo";
+
+// MARK: - Settings Screen
+"app" = "APLICACIÓN";
+"notificationPreferences" = "Preferencias de Notificación";
+"languageSettings" = "Idioma";
+
+// MARK: - Auth Screen
+"signIn" = "Iniciar Sesión";
+"signUp" = "Registrarse";
+"email" = "Correo Electrónico";
+"password" = "Contraseña";
+"forgotPassword" = "¿Olvidó su Contraseña?";
+
+// MARK: - Daily Quote
+"dailyQuote" = "Cita Diaria";
+"shareQuote" = "Compartir Cita";
+"quotes" = "Citas";
+"previousQuotes" = "Citas Anteriores";
+"noPreviousQuotes" = "No hay citas anteriores disponibles";
+"noQuoteAvailable" = "No hay cita disponible hoy.";
+"fromNotification" = "De Notificación";
+
+// MARK: - Chat
+"chat" = "Chat";
+"send" = "Enviar";
+"messageHint" = "Escribe tu mensaje...";
+"newChat" = "Nuevo Chat";
+"priest" = "Sacerdote";
+"welcomeToChat" = "Bienvenido a la Confesión Digital";
+"holySpirit" = "En el nombre del Padre, del Hijo y del Espíritu Santo.";
+"confessSuggestion1" = "Bendíceme Padre, porque he pecado";
+"confessSuggestion2" = "Necesito orientación con un dilema moral";
+"confessSuggestion3" = "¿Cómo puedo buscar el perdón?";
+"messageLimitReached" = "Límite de mensajes alcanzado";
+"upgradeToPremium" = "Actualiza a Premium para mensajes ilimitados";
+"confessThoughts" = "Confiesa tus pensamientos...";
+"noChatsYet" = "No hay chats todavía";
+"newConversation" = "Nueva Conversación";
+
+// MARK: - Chat History Sections
+"Today" = "Hoy";
+"Yesterday" = "Ayer";
+"Last Week" = "Última Semana";
+"Earlier" = "Anterior";
+
+// MARK: - Sidebar
+"upgradeToPremiumButton" = "Actualizar a Premium";
+"dailySpiritualQuote" = "Cita Espiritual Diaria";
+
+// MARK: - Paywall
+"unlockPremium" = "Desbloquear Premium";
+"restorePurchases" = "Restaurar Compras";
+
+// MARK: - Accessibility
+"openSettings" = "Abre la configuración del sistema para cambiar el idioma de la aplicación"; 

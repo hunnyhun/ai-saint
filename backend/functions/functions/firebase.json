@@ -1,9 +1,0 @@
-{
-  "functions": {
-    "source": ".",
-    "predeploy": [
-      "npm --prefix \".\" run lint",
-      "npm --prefix \".\" run build"
-    ]
-  }
-} 

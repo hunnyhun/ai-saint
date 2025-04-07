@@ -1,0 +1,70 @@
+/* 
+  Localizable.strings
+  AI-Saint
+*/
+
+// MARK: - Common UI Elements
+"settings" = "Settings";
+"language" = "Language";
+"done" = "Done";
+"cancel" = "Cancel";
+"signOut" = "Sign Out";
+"appTitle" = "AI Saint";
+"premium" = "Premium Subscription";
+"freeAccount" = "Free Account";
+"anonymousUser" = "Anonymous User";
+
+// MARK: - Settings Screen
+"app" = "APP";
+"notificationPreferences" = "Notification Preferences";
+"languageSettings" = "Language";
+
+// MARK: - Auth Screen
+"signIn" = "Sign In";
+"signUp" = "Sign Up";
+"email" = "Email";
+"password" = "Password";
+"forgotPassword" = "Forgot Password?";
+
+// MARK: - Daily Quote
+"dailyQuote" = "Daily Quote";
+"shareQuote" = "Share Quote";
+"quotes" = "Quotes";
+"previousQuotes" = "Previous Quotes";
+"noPreviousQuotes" = "No previous quotes available";
+"noQuoteAvailable" = "No quote available today.";
+"fromNotification" = "From Notification";
+
+// MARK: - Chat
+"chat" = "Chat";
+"send" = "Send";
+"messageHint" = "Type your message...";
+"newChat" = "New Chat";
+"priest" = "Priest";
+"welcomeToChat" = "Welcome to Digital Confession";
+"holySpirit" = "In the name of the Father, and of the Son, and of the Holy Spirit.";
+"confessSuggestion1" = "Bless me Father, for I have sinned";
+"confessSuggestion2" = "I need guidance with a moral dilemma";
+"confessSuggestion3" = "How can I seek forgiveness?";
+"messageLimitReached" = "Message limit reached";
+"upgradeToPremium" = "Upgrade to Premium for unlimited messages";
+"confessThoughts" = "Confess your thoughts...";
+"noChatsYet" = "No chats yet";
+"newConversation" = "New Conversation";
+
+// MARK: - Chat History Sections
+"Today" = "Today";
+"Yesterday" = "Yesterday";
+"Last Week" = "Last Week";
+"Earlier" = "Earlier";
+
+// MARK: - Sidebar
+"upgradeToPremiumButton" = "Upgrade to Premium";
+"dailySpiritualQuote" = "Daily Spiritual Quote";
+
+// MARK: - Paywall
+"unlockPremium" = "Unlock Premium";
+"restorePurchases" = "Restore Purchases";
+
+// MARK: - Accessibility
+"openSettings" = "Opens system settings to change app language"; 

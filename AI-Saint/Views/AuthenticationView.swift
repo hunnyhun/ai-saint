@@ -162,9 +162,11 @@ struct AuthenticationView: View {
     @State private var errorMessage: String?
     @Environment(\.dismiss) private var dismiss
     @State private var animateCross = false
+    @State private var showNotificationAlert = false
     
     // MARK: - Environment
     let authManager = AuthenticationManager.shared
+    let notificationManager = NotificationManager.shared
     
     // MARK: - Body
     var body: some View {
@@ -266,7 +268,13 @@ struct AuthenticationView: View {
             .interactiveDismissDisabled(true)
             .onChange(of: authManager.isAuthenticated) { _, isAuthenticated in
                 if isAuthenticated {
+                    // Print debug message to track this event
+                    print("📱 [AuthView] User authenticated, dismissing view")
+                    
+                    // Simply dismiss this view without showing notification prompt
                     dismiss()
+                    
+                    // Don't show notification alert here - it's handled in ContentView
                 }
             }
         }

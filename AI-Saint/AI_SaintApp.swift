@@ -8,6 +8,10 @@ struct DigitalConfessionApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var appCoordinator = AppCoordinator()
     
+    // Track language changes to restart app
+    @Environment(\.locale) private var locale
+    @State private var currentLocaleId: String?
+    
     // MARK: - Body
     var body: some Scene {
         WindowGroup {
@@ -16,6 +20,7 @@ struct DigitalConfessionApp: App {
                     // Content visibility controlled by coordinator
                     ContentView()
                         .opacity(appCoordinator.isContentVisible ? 1 : 0)
+                        .environment(\.scenePhase, .active) // Ensure the app knows it's active
                     
                     // Splash screen visibility controlled by coordinator
                     if !appCoordinator.isContentVisible {
@@ -25,10 +30,42 @@ struct DigitalConfessionApp: App {
                 }
                 .animation(.easeInOut(duration: 0.5), value: appCoordinator.isContentVisible)
                 .onAppear {
+                    // Rule: Always add debug logs
+                    print("📱 [App] Initial app appear, locale: \(locale.identifier)")
+                    currentLocaleId = locale.identifier
                     appCoordinator.startApp()
+                }
+                .onChange(of: locale) { 
+                    // Rule: Always add debug logs
+                    print("📱 [App] Locale changed from \(currentLocaleId ?? "unknown") to \(locale.identifier)")
+                    // Check if the language part has actually changed
+                    let oldLanguage = currentLocaleId?.split(separator: "_").first.map(String.init)
+                    let newLanguage = locale.identifier.split(separator: "_").first.map(String.init)
+                    
+                    if currentLocaleId != locale.identifier && (oldLanguage != newLanguage || oldLanguage == nil) {
+                        // Force restart the view to apply new language
+                        print("📱 [App] Language changed, restarting UI")
+                        appCoordinator.isContentVisible = false
+                        // Small delay before showing content again
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                            appCoordinator.isContentVisible = true
+                            print("📱 [App] UI restarted with new language: \(locale.identifier)")
+                        }
+                    } else {
+                        print("📱 [App] Only region changed, not restarting UI")
+                    }
+                    currentLocaleId = locale.identifier
+                }
+                .onOpenURL { url in
+                    // Handle deep links if needed for notifications
+                    print("📱 [App] Handling URL: \(url)")
                 }
             }
             .preferredColorScheme(.light)
+            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("DailyQuoteNotificationTapped"))) { notification in
+                // Handle notification when app is launched via notification
+                print("📱 [App] Handling quote notification from app launch")
+            }
         }
     }
     
@@ -72,7 +109,8 @@ struct SplashScreen: View {
                 )
                 .frame(width: 60, height: 96)
                 
-                Text("ConfessAI")
+                // Use static text since extensions may not be loaded yet during startup
+                Text("AI Saint")
                     .font(.system(size: 32, weight: .bold))
                     .foregroundColor(.primary)
                 

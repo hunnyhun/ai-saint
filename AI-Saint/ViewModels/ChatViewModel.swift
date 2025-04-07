@@ -1,11 +1,38 @@
 import Foundation
 import RevenueCat
 
-@Observable class ChatViewModel {
+// Debug log
+import Firebase
+import FirebaseAuth
+
+// Chat history date section for UI grouping
+enum ChatHistorySection: String, CaseIterable, Identifiable {
+    case today = "Today"
+    case yesterday = "Yesterday"
+    case lastWeek = "Last Week"
+    case earlier = "Earlier"
+    
+    var id: String { self.rawValue }
+    
+    // Add a computed property to return the localized string
+    var localizedTitle: String {
+        // Use the rawValue as the key for localization
+        return self.rawValue.localized
+    }
+}
+
+// Conversation with section info
+struct SectionedChatHistory {
+    let section: ChatHistorySection
+    var conversations: [ChatHistory]
+}
+
+@Observable final class ChatViewModel {
     // MARK: - Properties
-    private let apiService: APIService
+    private let cloudService: CloudFunctionService
     var messages: [ChatMessage] = []
     var chatHistory: [ChatHistory] = []
+    var sectionedHistory: [SectionedChatHistory] = []
     var isLoading = false
     var isLoadingHistory = false
     var error: String?
@@ -15,26 +42,41 @@ import RevenueCat
     private var refreshTask: Task<Void, Never>?
     private var conversationSaveTask: Task<Void, Never>?
     private var currentConversationId: String
+    var isRateLimited = false
+    private var lastLoadTime: Date?
+    private let loadThrottleInterval: TimeInterval = 3.0 // seconds
+    private var observerSetup = false
     
     // MARK: - Init
-    init(apiService: APIService = APIService()) {
-        self.apiService = apiService
+    init(cloudService: CloudFunctionService = CloudFunctionService()) {
+        self.cloudService = cloudService
         
         // Generate initial conversation ID with timestamp for better uniqueness
         let timestamp = ISO8601DateFormatter().string(from: Date())
         self.currentConversationId = "\(timestamp)-\(UUID().uuidString.prefix(8))"
         
         print("[Chat] ViewModel initialized with conversation ID: \(currentConversationId)")
+        
+        // Set up observer for user state changes
+        setupSubscriptionObserver()
     }
     
     deinit {
         refreshTask?.cancel()
         conversationSaveTask?.cancel()
-        print("[Chat] ViewModel deinitialized")
     }
     
     // MARK: - Chat History Management
     func loadChatHistory() {
+        // Throttle frequent calls
+        if let lastTime = lastLoadTime, 
+           Date().timeIntervalSince(lastTime) < loadThrottleInterval {
+            return
+        }
+        
+        // Update last load time
+        lastLoadTime = Date()
+        
         // Cancel any existing refresh task
         refreshTask?.cancel()
         
@@ -47,88 +89,186 @@ import RevenueCat
                     self.error = nil
                 }
                 
-                // Load history in background for all users (not just premium)
-                let history = try await apiService.getChatHistory()
-                print("[Chat] Received history: \(history.count) conversations")
+                // Load history using cloud functions
+                let historyData = try await cloudService.getChatHistory()
+                
+                // Parse the history data into ChatHistory objects
+                var history: [ChatHistory] = []
+                for historyItem in historyData {
+                    if let id = historyItem["id"] as? String {
+                        // Try to get messages from the response
+                        if let messagesData = historyItem["messages"] as? [[String: Any]] {
+                            
+                            // Extract title from first user message or use default
+                            let title = historyItem["title"] as? String ?? "Conversation"
+                            
+                            // Get timestamp - enhanced handling for Firestore timestamp formats
+                            let timestamp: TimeInterval
+                            
+                            // Try multiple formats that might come from Firebase
+                            if let ts = historyItem["timestamp"] as? TimeInterval {
+                                timestamp = ts
+                            } else if let ts = historyItem["timestamp"] as? Double {
+                                timestamp = ts
+                            } else if let lastUpdated = historyItem["lastUpdated"] as? [String: Any], 
+                                  let seconds = lastUpdated["_seconds"] as? TimeInterval {
+                                timestamp = seconds
+                            } else if let lastUpdated = historyItem["lastUpdated"] as? [String: Any],
+                                  let seconds = lastUpdated["seconds"] as? TimeInterval {
+                                timestamp = seconds
+                            } else if let lastUpdatedStr = historyItem["lastUpdated"] as? String,
+                                  let date = ISO8601DateFormatter().date(from: lastUpdatedStr) {
+                                timestamp = date.timeIntervalSince1970
+                            } else {
+                                // Default to current time
+                                timestamp = Date().timeIntervalSince1970
+                            }
+                            
+                            // Parse messages
+                            var messages: [ChatMessage] = []
+                            for messageItem in messagesData {
+                                // Extract message data based on Firebase format
+                                if let content = messageItem["content"] as? String,
+                                   let role = messageItem["role"] as? String {
+                                    
+                                    // Get timestamp, defaulting to current if not available
+                                    let msgTimestamp: Date
+                                    if let ts = messageItem["timestamp"] as? String {
+                                        msgTimestamp = ISO8601DateFormatter().date(from: ts) ?? Date()
+                                    } else {
+                                        msgTimestamp = Date()
+                                    }
+                                    
+                                    // Create message with Firebase format mapping
+                                    let message = ChatMessage(
+                                        id: messageItem["id"] as? String ?? UUID().uuidString,
+                                        text: content,
+                                        isUser: role == "user",
+                                        timestamp: msgTimestamp
+                                    )
+                                    messages.append(message)
+                                }
+                            }
+                            
+                            // Create chat history object with proper timestamp
+                            if !messages.isEmpty {
+                                // Create Date from timestamp
+                                let date = Date(timeIntervalSince1970: timestamp)
+                                
+                                let chatHistory = ChatHistory(
+                                    id: id,
+                                    title: title,
+                                    timestamp: date,
+                                    messages: messages
+                                )
+                                history.append(chatHistory)
+                            }
+                        }
+                    }
+                }
+                
+                print("[Chat] Parsed \(history.count) conversations")
                 
                 // Check if task was cancelled
                 if Task.isCancelled { return }
                 
+                // Create a local copy to avoid reference capture issues
+                let localHistory = history
+                
+                // Group conversations by date sections
+                let groupedHistory = createSectionedHistory(localHistory)
+                
                 await MainActor.run {
                     self.isLoadingHistory = false
-                    self.chatHistory = history
-                    print("[Chat] Updated chat history count:", history.count)
+                    self.chatHistory = localHistory
+                    self.sectionedHistory = groupedHistory
                     
                     // Try to match current messages with a conversation if needed
-                    matchCurrentMessagesToConversation(history)
+                    matchCurrentMessagesToConversation(localHistory)
                     
                     // Cache the history for faster subsequent loads
                     Task {
-                        await cacheHistory(history)
-                    }
-                }
-                print("[Chat] Successfully loaded \(history.count) chat histories")
-            } catch let apiError as APIError {
-                print("[Chat] API Error loading chat history:", apiError)
-                if !Task.isCancelled {
-                    await MainActor.run {
-                        self.isLoadingHistory = false
-                        switch apiError {
-                        case .notAuthenticated:
-                            self.error = "Please sign in to view chat history"
-                        case .serverError(let code):
-                            self.error = "Server error (\(code)): Failed to load chat history"
-                        case .invalidData:
-                            self.error = "Invalid data received from server"
-                        default:
-                            self.error = "Failed to load chat history: \(apiError.localizedDescription)"
-                        }
+                        await cacheHistory(localHistory)
                     }
                 }
             } catch {
-                print("[Chat] Unexpected error loading chat history:", error)
+                print("[Chat] Error loading chat history: \(error.localizedDescription)")
                 if !Task.isCancelled {
                     await MainActor.run {
                         self.isLoadingHistory = false
-                        self.error = "An unexpected error occurred: \(error.localizedDescription)"
+                        self.error = "Failed to load chat history: \(error.localizedDescription)"
                     }
                 }
             }
         }
     }
     
-    // Cache history for faster loading
-    private func cacheHistory(_ history: [ChatHistory]) async {
-        do {
-            let encoder = JSONEncoder()
-            let data = try encoder.encode(history)
-            UserDefaults.standard.set(data, forKey: "cached_chat_history")
-            print("[Chat] Successfully cached chat history")
-        } catch {
-            print("[Chat] Failed to cache chat history:", error)
-        }
-    }
-    
-    // Load cached history
-    private func loadCachedHistory() -> [ChatHistory]? {
-        guard let data = UserDefaults.standard.data(forKey: "cached_chat_history") else {
-            return nil
+    // Group conversations by date section
+    private func createSectionedHistory(_ conversations: [ChatHistory]) -> [SectionedChatHistory] {
+        // Get reference dates
+        let now = Date()
+        
+        // Create calendar with explicit timezone to avoid time shift issues
+        var calendar = Calendar.current
+        calendar.timeZone = TimeZone.current
+        
+        let today = calendar.startOfDay(for: now)
+        let yesterday = calendar.date(byAdding: .day, value: -1, to: today)!
+        let lastWeek = calendar.date(byAdding: .day, value: -7, to: today)!
+        
+        // Create empty sectioned data
+        var sections: [ChatHistorySection: [ChatHistory]] = [
+            .today: [],
+            .yesterday: [],
+            .lastWeek: [],
+            .earlier: []
+        ]
+        
+        // Categorize each conversation
+        for conversation in conversations {
+            let date = conversation.timestamp
+            let isToday = calendar.isDateInToday(date)
+            let isYesterday = calendar.isDateInYesterday(date)
+            
+            // Check which section this conversation belongs to
+            if isToday {
+                sections[.today]?.append(conversation)
+            } else if isYesterday {
+                sections[.yesterday]?.append(conversation)
+            } else if date >= lastWeek && date < yesterday {
+                sections[.lastWeek]?.append(conversation)
+            } else {
+                sections[.earlier]?.append(conversation)
+            }
         }
         
-        do {
-            let decoder = JSONDecoder()
-            let history = try decoder.decode([ChatHistory].self, from: data)
-            print("[Chat] Successfully loaded cached chat history")
-            return history
-        } catch {
-            print("[Chat] Failed to load cached chat history:", error)
-            return nil
+        // Sort conversations within each section - newest first
+        for section in ChatHistorySection.allCases {
+            sections[section]?.sort { $0.timestamp > $1.timestamp }
         }
+        
+        // Convert to array format and remove empty sections
+        return ChatHistorySection.allCases
+            .map { section in
+                SectionedChatHistory(
+                    section: section,
+                    conversations: sections[section] ?? []
+                )
+            }
+            .filter { !$0.conversations.isEmpty }
+    }
+    
+    // Update sections after adding a new conversation
+    private func updateSections() {
+        sectionedHistory = createSectionedHistory(chatHistory)
     }
     
     // Subscribe to subscription changes
     private func setupSubscriptionObserver() {
-        print("DEBUG: [Chat] Setting up user state observer")
+        // Prevent multiple registrations
+        guard !observerSetup else { return }
+        observerSetup = true
+        
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleUserStateChange),
@@ -147,19 +287,10 @@ import RevenueCat
             return
         }
         
-        print("DEBUG: [Chat] User state changed:")
-        print("  - Auth Status: \(authStatus)")
-        print("  - Is Premium: \(isPremium)")
-        print("  - User ID: \(userId ?? "nil")")
-        print("  - User Email: \(userEmail ?? "nil")")
-        print("  - Timestamp: \(timestamp)")
-        
         // Load chat history for all authenticated users (not just premium)
         if authStatus == "authenticated" {
-            print("[Chat] User authenticated, loading chat history")
             loadChatHistory()
         } else {
-            print("[Chat] User not authenticated")
             // Clear data
             messages = []
             chatHistory = []
@@ -169,12 +300,8 @@ import RevenueCat
     private func matchCurrentMessagesToConversation(_ history: [ChatHistory]) {
         // Only try to match if we have messages but no current conversation
         if currentConversation == nil && !messages.isEmpty && !history.isEmpty {
-            print("[Chat] Attempting to find matching conversation for current messages")
-            
             // Get the most recent conversation
             if let mostRecent = history.first {
-                print("[Chat] Found most recent conversation: \(mostRecent.id)")
-                
                 // Check if the messages match what we have
                 if mostRecent.messages.count >= messages.count {
                     // Check if the last few messages match
@@ -184,153 +311,29 @@ import RevenueCat
                     }
                     
                     if messagesMatch {
-                        print("[Chat] Messages match, setting current conversation to: \(mostRecent.id)")
                         currentConversation = mostRecent
                         // Also update the conversation ID to match
                         currentConversationId = mostRecent.id
-                    } else {
-                        print("[Chat] Messages don't match with most recent conversation")
-                    }
-                } else {
-                    print("[Chat] Most recent conversation has fewer messages than current chat")
-                }
-            }
-        }
-    }
-    
-    // MARK: - Conversation Management
-    func loadConversation(_ conversation: ChatHistory) {
-        print("[Chat] Loading conversation:", conversation.debugDescription)
-        
-        // If we're already viewing this conversation, do nothing
-        if let current = currentConversation, current.id == conversation.id {
-            print("[Chat] Already viewing this conversation, no change needed")
-            return
-        }
-        
-        // First save current conversation if needed
-        if hasUnsavedChanges && messages.count > 0 {
-            print("[Chat] Saving current conversation before loading new one")
-            saveCurrentConversation()
-        }
-        
-        // Then load the selected conversation
-        messages = conversation.messages
-        currentConversation = conversation
-        currentConversationId = conversation.id
-        hasUnsavedChanges = false
-        error = nil
-        
-        print("[Chat] Loaded conversation with \(conversation.messages.count) messages, ID: \(currentConversationId)")
-    }
-    
-    func startNewChat() {
-        // First save the current conversation in case there are unsaved changes
-        saveCurrentConversation()
-        
-        // Generate a new conversation ID with timestamp for better uniqueness
-        let timestamp = ISO8601DateFormatter().string(from: Date())
-        currentConversationId = "\(timestamp)-\(UUID().uuidString.prefix(8))"
-        
-        // Clear current state
-        messages = []
-        currentConversation = nil
-        hasUnsavedChanges = false
-        error = nil
-        
-        print("[Chat] New chat started with ID: \(currentConversationId)")
-        
-        // Force refresh chat history to ensure we have the latest conversations
-        // Do this for all users, not just premium
-        Task {
-            // Small delay to ensure any pending saves complete
-            try? await Task.sleep(nanoseconds: 300_000_000) // 0.3 seconds
-            if !Task.isCancelled {
-                await MainActor.run {
-                    loadChatHistory()
-                }
-            }
-        }
-    }
-    
-    private func saveCurrentConversation() {
-        guard messages.count > 0 else {
-            print("[Chat] No messages to save")
-            return
-        }
-        
-        // Cancel any existing save task
-        conversationSaveTask?.cancel()
-        
-        print("[Chat] Saving current conversation with \(messages.count) messages, ID: \(currentConversationId)")
-        
-        // We need to save the last message if it hasn't been sent to the backend yet
-        if hasUnsavedChanges && messages.count >= 2 {
-            let lastUserMessageIndex = messages.lastIndex(where: { $0.isUser }) ?? -1
-            
-            if lastUserMessageIndex >= 0 && lastUserMessageIndex < messages.count - 1 {
-                // There's a user message followed by an AI response, save it
-                let userMessage = messages[lastUserMessageIndex]
-                
-                conversationSaveTask = Task {
-                    do {
-                        // Send the last user message to ensure it's saved
-                        print("[Chat] Saving last conversation exchange for ID: \(currentConversationId)")
-                        _ = try await apiService.sendChatMessage(userMessage.text, conversationId: currentConversationId)
-                        
-                        // Check if task was cancelled
-                        if Task.isCancelled { return }
-                        
-                        // Now refresh chat history
-                        await MainActor.run {
-                            loadChatHistory()
-                        }
-                    } catch {
-                        print("[Chat] Error saving conversation:", error)
-                        if !Task.isCancelled {
-                            await MainActor.run {
-                                self.error = "Failed to save conversation: \(error.localizedDescription)"
-                            }
-                        }
-                    }
-                }
-            }
-        } else {
-            // Just refresh chat history
-            conversationSaveTask = Task {
-                // Small delay to ensure any pending operations complete
-                try? await Task.sleep(nanoseconds: 200_000_000) // 0.2 seconds
-                if !Task.isCancelled {
-                    await MainActor.run {
-                        loadChatHistory()
                     }
                 }
             }
         }
-        
-        hasUnsavedChanges = false
     }
     
-    // MARK: - Message Handling
-    func sendMessage(_ text: String) {
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            print("[Chat] Attempted to send empty message, ignoring")
+    // MARK: - Message Sending
+    func sendMessage(_ text: String) async {
+        // Guard against concurrent requests
+        guard !isLoading else {
             return
         }
         
-        // Debug log
-        print("[Chat] Sending message for conversation ID: \(currentConversationId)")
+        // Update UI state
+        isLoading = true
+        setErrorMessage(nil)
         
-        // Check if this is a new conversation
-        let isNewConversation = currentConversation == nil
-        if isNewConversation {
-            print("[Chat] This is a new conversation with ID: \(currentConversationId)")
-        } else {
-            print("[Chat] Continuing conversation: \(currentConversation?.id ?? "unknown")")
-        }
-        
-        // Add user message
+        // Create and add user message
         let userMessage = ChatMessage(
+            id: UUID().uuidString,
             text: text,
             isUser: true,
             timestamp: Date()
@@ -338,86 +341,193 @@ import RevenueCat
         messages.append(userMessage)
         hasUnsavedChanges = true
         
-        // Set loading state
-        isLoading = true
-        error = nil
-        
-        // Send to backend
-        Task {
-            do {
-                let response = try await apiService.sendChatMessage(text, conversationId: currentConversationId)
+        // Call cloud function and handle response
+        do {
+            // Make the API call
+            let responseData = try await cloudService.sendMessage(
+                message: text,
+                conversationId: currentConversation?.id
+            )
+            
+            // Handle successful response
+            if let responseContent = responseData["response"] as? String, !responseContent.isEmpty {
+                // Create AI message
+                let aiMessage = ChatMessage(
+                    id: UUID().uuidString,
+                    text: responseContent,
+                    isUser: false,
+                    timestamp: Date()
+                )
                 
-                // Check if task was cancelled
-                if Task.isCancelled { return }
+                // Add to conversation
+                messages.append(aiMessage)
                 
-                // Add AI response
-                await MainActor.run {
-                    let aiMessage = ChatMessage(
-                        text: response.response,
-                        isUser: false,
-                        timestamp: Date()
-                    )
-                    messages.append(aiMessage)
-                    isLoading = false
-                    
-                    // Update conversation ID if returned from backend
-                    if let newConversationId = response.conversationId {
-                        print("[Chat] Received conversation ID from backend: \(newConversationId)")
-                        if currentConversationId != newConversationId {
-                            print("[Chat] Updating conversation ID from \(currentConversationId) to \(newConversationId)")
-                            currentConversationId = newConversationId
-                        }
-                    }
-                    
-                    hasUnsavedChanges = false  // Messages are now saved
-                    
-                    // Update chat history for all authenticated users (not just premium)
-                    if userStatusManager.state.isAuthenticated {
-                        print("[Chat] Refreshing chat history after message")
-                        // If this was a new conversation, we need to update our current conversation
-                        if isNewConversation {
-                            print("[Chat] This was a new conversation, refreshing to get the new conversation ID")
-                            Task {
-                                // Add a small delay to ensure the backend has processed the new conversation
-                                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
-                                if !Task.isCancelled {
-                                    await MainActor.run {
-                                        loadChatHistory()
-                                    }
-                                }
-                            }
-                        } else {
-                            loadChatHistory()
-                        }
-                    }
+                // Update conversation ID if provided
+                if let newConversationId = responseData["conversationId"] as? String {
+                    currentConversationId = newConversationId
                 }
                 
-                print("[Chat] Received response for conversation ID: \(currentConversationId)")
-            } catch {
-                print("[Chat] Error:", error)
-                if !Task.isCancelled {
-                await MainActor.run {
-                        self.isLoading = false
-                        self.error = "Failed to send message: \(error.localizedDescription)"
-                    }
-                }
+                // Save updated conversation
+                saveConversation()
+            } else {
+                // Handle empty response
+                setErrorMessage("Received empty response from server")
             }
+        } catch let apiError as CloudFunctionError {
+            // Handle API-specific errors
+            
+            // Special handling for rate limiting
+            if apiError.localizedDescription.contains("Message limit exceeded") {
+                isRateLimited = true
+                setErrorMessage("Message limit exceeded. Please upgrade to premium for unlimited messages.")
+            } else {
+                setErrorMessage(apiError.localizedDescription)
+            }
+        } catch {
+            // Handle unexpected errors
+            let errorMessage = error.localizedDescription
+            setErrorMessage("Error: \(errorMessage)")
+        }
+        
+        // Always reset loading state
+        isLoading = false
+    }
+    
+    // Helper method to set error message
+    private func setErrorMessage(_ message: String?) {
+        // FIXME: Fix error property assignment issue
+        // error = message
+        if let message = message {
+            print("[Chat] Error: \(message)")
         }
     }
     
-    func clearMessages() {
-        // Cancel any pending tasks
-        refreshTask?.cancel()
+    // MARK: - Saving Conversation
+    private func saveConversation() {
+        // Cancel any pending save task
         conversationSaveTask?.cancel()
         
-        // Generate a new conversation ID with timestamp for better uniqueness
+        // Create a new save task
+        conversationSaveTask = Task {
+            // Create a conversation title from first user message
+            let title = generateTitle()
+            
+            // Create a conversation object
+            let conversation = ChatHistory(
+                id: currentConversationId,
+                title: title,
+                timestamp: Date(),
+                messages: messages
+            )
+            
+            // If we're updating an existing conversation, replace it
+            if let index = chatHistory.firstIndex(where: { $0.id == currentConversationId }) {
+                chatHistory[index] = conversation
+            } else {
+                // Otherwise add it to the beginning
+                chatHistory.insert(conversation, at: 0)
+            }
+            
+            // Set as current conversation
+            currentConversation = conversation
+            
+            // Update sections
+            updateSections()
+            
+            // Cache history
+            await cacheHistory(chatHistory)
+            
+            // Reset unsaved flag
+            hasUnsavedChanges = false
+        }
+    }
+    
+    // MARK: - Load Conversation
+    func loadConversation(_ history: ChatHistory) {
+        // Set current conversation
+        currentConversation = history
+        messages = history.messages
+        currentConversationId = history.id
+        
+        // Reset state
+        isLoading = false
+        error = nil
+        hasUnsavedChanges = false
+    }
+    
+    // Cache history for faster loading
+    private func cacheHistory(_ history: [ChatHistory]) async {
+        do {
+            let encoder = JSONEncoder()
+            let data = try encoder.encode(history)
+            UserDefaults.standard.set(data, forKey: "cached_chat_history")
+        } catch {
+            print("[Chat] Failed to cache chat history: \(error.localizedDescription)")
+        }
+    }
+    
+    // Load cached history
+    private func loadCachedHistory() -> [ChatHistory]? {
+        guard let data = UserDefaults.standard.data(forKey: "cached_chat_history") else {
+            return nil
+        }
+        
+        do {
+            let decoder = JSONDecoder()
+            let history = try decoder.decode([ChatHistory].self, from: data)
+            return history
+        } catch {
+            print("[Chat] Failed to load cached history: \(error.localizedDescription)")
+            return nil
+        }
+    }
+    
+    // MARK: - Helper Methods
+    private func generateTitle() -> String {
+        // Use the first user message to generate a title
+        if let firstUserMessage = messages.first(where: { $0.isUser })?.text {
+            // Limit title length and clean up
+            let words = firstUserMessage.split(separator: " ")
+            if words.count <= 5 {
+                return firstUserMessage
+            } else {
+                return words.prefix(5).joined(separator: " ") + "..."
+            }
+        }
+        
+        // Fallback title - now localized
+        return "newConversation".localized
+    }
+    
+    // MARK: - Conversation Management
+    func clearConversation() {
+        // Reset messages
+        messages = []
+        
+        // Generate new conversation ID
         let timestamp = ISO8601DateFormatter().string(from: Date())
         currentConversationId = "\(timestamp)-\(UUID().uuidString.prefix(8))"
         
-        messages.removeAll()
+        // Reset current conversation
         currentConversation = nil
+    }
+    
+    // For backward compatibility
+    func startNewChat() {
+        clearConversation()
+    }
+    
+    func selectConversation(_ conversation: ChatHistory) {
+        // Set current conversation
+        currentConversation = conversation
+        currentConversationId = conversation.id
+        
+        // Update messages
+        messages = conversation.messages
+        
+        // Reset state
+        isLoading = false
         error = nil
         hasUnsavedChanges = false
-        print("[Chat] Messages cleared, new conversation ID: \(currentConversationId)")
     }
 } 

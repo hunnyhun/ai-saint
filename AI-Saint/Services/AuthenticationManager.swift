@@ -71,6 +71,9 @@ import os
             
             let authResult = try await Auth.auth().signIn(with: credential)
             print("DEBUG: Successfully signed in with Google. User: \(authResult.user.uid)")
+            
+            // Request notification permission after successful sign in
+            await requestNotificationPermission()
         } catch {
             print("ERROR: Google sign in error: \(error.localizedDescription)")
             throw error
@@ -142,6 +145,12 @@ import os
             authController.presentationContextProvider = self.appleSignInDelegate
             authController.performRequests()
         }
+    }
+    
+    // Helper function to request notification permission
+    private func requestNotificationPermission() async {
+        print("🔔 [AuthenticationManager] Requesting notification permission")
+        await NotificationManager.shared.requestNotificationPermission()
     }
 }
 

@@ -37,208 +37,14 @@ struct ChatView: View {
     // MARK: - Body
     var body: some View {
         VStack(spacing: 0) {
-            // Custom toolbar
-            HStack(spacing: 16) {
-                // Menu button
-                Button(action: {
-                    print("[Navigation] Menu button tapped")
-                    withAnimation(.spring()) {
-                        showSidebarCallback = true
-                    }
-                }) {
-                    Image(systemName: "line.3.horizontal")
-                        .foregroundColor(.primary)
-                        .font(.system(size: 22, weight: .semibold))
-                }
-                .frame(width: 36, height: 36)
-                
-                // Title
-                Group {
-                    if let conversation = viewModel.currentConversation {
-                        Text(conversation.title)
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundColor(.primary)
-                            .lineLimit(1)
-                    } else {
-                        Text("New Chat")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundColor(.primary)
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                
-                // New Chat button
-                Button(action: {
-                    print("[Navigation] New chat button tapped")
-                    viewModel.startNewChat()
-                }) {
-                    // Simple plus in circle like the image - made smaller
-                    ZStack {
-                        Circle()
-                            .stroke(Color.black, lineWidth: 1.5)
-                            .frame(width: 22, height: 22)
-                        
-                        Image(systemName: "plus")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(.black)
-                    }
-                }
-                .disabled(viewModel.isLoading)
-            }
-            .padding(.horizontal)
-            .frame(height: 44)
-            .background(Color.white)
+            chatToolbar
             
             Divider()
                 .opacity(0.5)
         
-            // Messages list
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(spacing: 12) {
-                        // Empty state for new chat
-                        if viewModel.messages.isEmpty {
-                            newChatWelcomeView
-                                .padding(.top, 40)
-                        }
-                        
-                        // Messages
-                        ForEach(viewModel.messages) { message in
-                            MessageBubble(message: message)
-                                .id(message.id)
-                        }
-                        
-                        // Show typing indicator when loading
-                        if viewModel.isLoading {
-                            HStack {
-                                TypingIndicator()
-                                    .padding()
-                                    .background(Color.white)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 16)
-                                        .stroke(Color.gray.opacity(0.2), lineWidth: 1)
-                                    )
-                                    .cornerRadius(16)
-                                Spacer()
-                            }
-                            .padding(.horizontal)
-                        }
-                        
-                        // Show premium button only when rate limit error occurs
-                        if viewModel.isRateLimited {
-                            premiumButton
-                        }
-                        
-                        // Bottom anchor view
-                        Color.clear
-                            .frame(height: 1)
-                            .id("bottomID")
-                    }
-                    .padding()
-                }
-                .background(Color.white)
-                .onChange(of: viewModel.messages.count) { _, _ in
-                    debugLog("Messages count changed, scrolling to bottom")
-                    withAnimation(.easeOut(duration: 0.3)) {
-                        proxy.scrollTo("bottomID", anchor: .bottom)
-                    }
-                }
-                .onChange(of: shouldScrollToBottom) { _, shouldScroll in
-                    if shouldScroll {
-                        debugLog("Manual scroll to bottom triggered")
-                        withAnimation(.easeOut(duration: 0.3)) {
-                            proxy.scrollTo("bottomID", anchor: .bottom)
-                        }
-                        shouldScrollToBottom = false
-                    }
-                }
-                .simultaneousGesture(
-                    DragGesture().onChanged { _ in
-                        if isTextFieldFocused {
-                            debugLog("Drag detected, dismissing keyboard")
-                            isTextFieldFocused = false
-                        }
-                    }
-                )
-            }
+            messagesListView
             
-            // Input area
-            VStack(spacing: 0) {
-                // Error message - show all errors except rate limit, which gets special treatment
-                if let error = viewModel.error, !viewModel.isRateLimited {
-                    Text(error)
-                        .foregroundColor(.red)
-                        .font(.footnote)
-                        .padding(.horizontal)
-                        .padding(.top, 8)
-                        .multilineTextAlignment(.center)
-                }
-                
-                // Input container
-                HStack(alignment: .bottom, spacing: 8) {
-                    // Message input field
-                    ZStack(alignment: .trailing) {
-                        TextField("Confess your thoughts...", text: $messageText, axis: .vertical)
-                            .textFieldStyle(.plain)
-                            .padding(.vertical, 10)
-                            .padding(.horizontal, 16)
-                            .padding(.trailing, 40)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill(Color.white)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .stroke(Color.gray.opacity(0.2), lineWidth: 1)
-                            )
-                            .lineLimit(1...5)
-                            .focused($isTextFieldFocused)
-                            .disabled(viewModel.isLoading)
-                            .submitLabel(.send)
-                            .onSubmit {
-                                debugLog("Submit triggered, sending message")
-                                sendMessage()
-                            }
-                            .onChange(of: viewModel.isLoading) { _, isLoading in
-                                if isLoading {
-                                    debugLog("Loading started, dismissing keyboard")
-                                    isTextFieldFocused = false
-                                }
-                            }
-                            .onChange(of: isTextFieldFocused) { _, focused in
-                                if focused {
-                                    debugLog("TextField focused, triggering scroll")
-                                    shouldScrollToBottom = true
-                                }
-                            }
-                        
-                        // Send button
-                        Button(action: sendMessage) {
-                            Image(systemName: messageText.isEmpty ? "circle" : "arrow.up.circle.fill")
-                                .font(.system(size: 24))
-                                .foregroundColor(messageText.isEmpty || viewModel.isLoading ? .gray.opacity(0.5) : .blue)
-                        }
-                        .disabled(messageText.isEmpty || viewModel.isLoading)
-                        .padding(.trailing, 16)
-                        .scaleEffect(messageText.isEmpty ? 0.8 : 1.0)
-                        .animation(.spring(response: 0.3), value: messageText.isEmpty)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .padding(.bottom, 8) // Add bottom padding for spacing
-            }
-            .background(
-                Color.white
-            )
-            .clipShape(
-                RoundedCorners(tl: 24, tr: 24, bl: 0, br: 0)
-            )
-            .shadow(color: Color.black.opacity(0.15), radius: 8, x: 0, y: -3)
-            .edgesIgnoringSafeArea(.bottom) // Ensure input area extends to bottom edge
-            .onAppear {
-                print("DEBUG: Input area with rounded corners appeared - padding added")
-            }
+            inputArea
         }
         .sheet(isPresented: $showPaywall) {
             PaywallView()
@@ -256,6 +62,205 @@ struct ChatView: View {
         }
     }
     
+    // MARK: - Toolbar View
+    private var chatToolbar: some View {
+        HStack(spacing: 16) {
+            // Menu button
+            Button(action: {
+                print("[Navigation] Menu button tapped")
+                withAnimation(.spring()) {
+                    showSidebarCallback = true
+                }
+            }) {
+                Image(systemName: "line.3.horizontal")
+                    .foregroundColor(.primary)
+                    .font(.system(size: 22, weight: .semibold))
+            }
+            .frame(width: 36, height: 36)
+            
+            // Title
+            Group {
+                if let conversation = viewModel.currentConversation {
+                    Text(conversation.title)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                } else {
+                    Text("newChat".localized)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.primary)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            
+            // New Chat button
+            Button(action: {
+                print("[Navigation] New chat button tapped")
+                viewModel.clearConversation()
+            }) {
+                // Simple plus in circle like the image - made smaller
+                ZStack {
+                    Circle()
+                        .stroke(Color.black, lineWidth: 1.5)
+                        .frame(width: 22, height: 22)
+                    
+                    Image(systemName: "plus")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.black)
+                }
+            }
+            .disabled(viewModel.isLoading)
+        }
+        .padding(.horizontal)
+        .frame(height: 44)
+        .background(Color.white)
+    }
+    
+    // MARK: - Messages List View
+    private var messagesListView: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 12) {
+                    // Empty state for new chat
+                    if viewModel.messages.isEmpty {
+                        newChatWelcomeView
+                            .padding(.top, 40)
+                    }
+                    
+                    // Messages
+                    ForEach(viewModel.messages) { message in
+                        MessageBubble(message: message)
+                            .id(message.id)
+                    }
+                    
+                    // Show typing indicator when loading
+                    if viewModel.isLoading {
+                        HStack {
+                            TypingIndicator()
+                                .padding()
+                                .background(Color.white)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 16)
+                                    .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+                                )
+                                .cornerRadius(16)
+                            Spacer()
+                        }
+                        .padding(.horizontal)
+                    }
+                    
+                    // Show premium button only when rate limit error occurs
+                    if viewModel.isRateLimited {
+                        premiumButton
+                    }
+                    
+                    // Bottom anchor view
+                    Color.clear
+                        .frame(height: 1)
+                        .id("bottomID")
+                }
+                .padding()
+            }
+            .background(Color.white)
+            .onChange(of: viewModel.messages.count) { _, _ in
+                debugLog("Messages count changed, scrolling to bottom")
+                scrollToBottom(proxy)
+            }
+            .onChange(of: shouldScrollToBottom) { _, shouldScroll in
+                if shouldScroll {
+                    debugLog("Manual scroll to bottom triggered")
+                    scrollToBottom(proxy)
+                    shouldScrollToBottom = false
+                }
+            }
+            .simultaneousGesture(
+                DragGesture().onChanged { _ in
+                    if isTextFieldFocused {
+                        debugLog("Drag detected, dismissing keyboard")
+                        isTextFieldFocused = false
+                    }
+                }
+            )
+        }
+    }
+    
+    // MARK: - Input Area View
+    private var inputArea: some View {
+        VStack(spacing: 0) {
+            // Error message - show all errors except rate limit, which gets special treatment
+            if let error = viewModel.error, !viewModel.isRateLimited {
+                Text(error)
+                    .foregroundColor(.red)
+                    .font(.footnote)
+                    .padding(.horizontal)
+                    .padding(.top, 8)
+                    .multilineTextAlignment(.center)
+            }
+            
+            // Input container
+            HStack(alignment: .bottom, spacing: 8) {
+                inputTextField
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 16)
+            .padding(.bottom, 8) // Add bottom padding for spacing
+        }
+        .background(Color.white)
+        .clipShape(RoundedCorners(tl: 24, tr: 24, bl: 0, br: 0))
+        .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: -16)
+        .edgesIgnoringSafeArea(.bottom) // Ensure input area extends to bottom edge
+    }
+    
+    // MARK: - Input Text Field
+    private var inputTextField: some View {
+        ZStack(alignment: .trailing) {
+            TextField("confessThoughts".localized, text: $messageText, axis: .vertical)
+                .textFieldStyle(.plain)
+                .padding(.vertical, 10)
+                .padding(.horizontal, 16)
+                .padding(.trailing, 40)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color.white)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+                )
+                .lineLimit(1...5)
+                .focused($isTextFieldFocused)
+                .disabled(viewModel.isLoading)
+                .submitLabel(.send)
+                .onSubmit {
+                    debugLog("Submit triggered, sending message")
+                    sendMessage()
+                }
+                .onChange(of: viewModel.isLoading) { _, isLoading in
+                    if isLoading {
+                        debugLog("Loading started, dismissing keyboard")
+                        isTextFieldFocused = false
+                    }
+                }
+                .onChange(of: isTextFieldFocused) { _, focused in
+                    if focused {
+                        debugLog("TextField focused, triggering scroll")
+                        shouldScrollToBottom = true
+                    }
+                }
+            
+            // Send button
+            Button(action: sendMessage) {
+                Image(systemName: messageText.isEmpty ? "circle" : "arrow.up.circle.fill")
+                    .font(.system(size: 24))
+                    .foregroundColor(messageText.isEmpty || viewModel.isLoading ? .gray.opacity(0.5) : .blue)
+            }
+            .disabled(messageText.isEmpty || viewModel.isLoading)
+            .padding(.trailing, 16)
+            .scaleEffect(messageText.isEmpty ? 0.8 : 1.0)
+            .animation(.spring(response: 0.3), value: messageText.isEmpty)
+        }
+    }
+    
     // MARK: - Helper Methods
     private func scrollToBottom(_ proxy: ScrollViewProxy) {
         withAnimation(.easeOut(duration: 0.3)) {
@@ -264,10 +269,13 @@ struct ChatView: View {
     }
     
     private func sendMessage() {
-        guard !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let text = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
         
-        debugLog("Sending message: \(messageText)")
-        let text = messageText
+        // Debug log
+        debugLog("Sending message: \(text)")
+        
+        // Clear input field immediately
         messageText = ""
         
         // Dismiss keyboard immediately when sending
@@ -276,9 +284,9 @@ struct ChatView: View {
         // Trigger scroll to bottom
         shouldScrollToBottom = true
         
-        // Send message after keyboard is dismissed
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            viewModel.sendMessage(text)
+        // Send message in the background
+        Task {
+            await viewModel.sendMessage(text)
         }
     }
     
@@ -289,14 +297,14 @@ struct ChatView: View {
             showPaywall = true
         }) {
             VStack(spacing: 8) {
-                Text("Message limit reached")
+                Text("messageLimitReached".localized)
                     .font(.headline)
                     .foregroundColor(.white)
                 
                 HStack {
                     Image(systemName: "star.fill")
                         .font(.system(size: 20))
-                    Text("Upgrade to Premium for unlimited messages")
+                    Text("upgradeToPremium".localized)
                         .font(.subheadline)
                 }
                 .foregroundColor(.white)
@@ -332,22 +340,26 @@ struct ChatView: View {
             )
             .frame(width: 40, height: 64)
             
-            Text("Welcome to Digital Confession")
+            Text("welcomeToChat".localized)
                 .font(.headline)
             
-            Text("In the name of the Father, and of the Son, and of the Holy Spirit.")
+            Text("holySpirit".localized)
                 .font(.subheadline)
                 .foregroundColor(.gray)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)
             
             VStack(spacing: 12) {
-                ForEach(["Bless me Father, for I have sinned", "I need guidance with a moral dilemma", "How can I seek forgiveness?"], id: \.self) { suggestion in
+                ForEach([
+                    "confessSuggestion1",
+                    "confessSuggestion2", 
+                    "confessSuggestion3"
+                ], id: \.self) { suggestionKey in
                     Button(action: {
-                        messageText = suggestion
+                        messageText = suggestionKey.localized
                         sendMessage()
                     }) {
-                        Text(suggestion)
+                        Text(suggestionKey.localized)
                             .padding(.vertical, 8)
                             .padding(.horizontal, 16)
                             .background(Color.blue.opacity(0.1))
@@ -387,7 +399,7 @@ struct MessageBubble: View {
                 Spacer()
                 Text(message.text)
                     .padding()
-                    .background(Color.white)
+                    .background(Color.gray.opacity(0.1))
                     .overlay(
                         RoundedRectangle(cornerRadius: 16)
                             .stroke(Color.gray.opacity(0.2), lineWidth: 1)
@@ -395,6 +407,9 @@ struct MessageBubble: View {
                     .foregroundColor(.primary)
                     .cornerRadius(16)
                     .textSelection(.enabled)
+                    .onAppear {
+                        print("[MessageBubble] User message bubble rendered with gray opacity 0.1")
+                    }
             } else {
                 VStack(alignment: .leading) {
                     HStack {
@@ -405,7 +420,7 @@ struct MessageBubble: View {
                         )
                         .frame(width: 16, height: 25)
                         
-                        Text("Priest")
+                        Text("priest".localized)
                             .font(.caption)
                             .foregroundColor(.gray)
                     }

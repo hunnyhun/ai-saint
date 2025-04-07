@@ -184,7 +184,9 @@ enum AppFeature {
     
     // MARK: - Auth Methods
     func signOut() async throws {
-        try await authManager.signOut()
+        // Debug log
+        print("🔑 Signing out user")
+        try authManager.signOut()
     }
 }
 
