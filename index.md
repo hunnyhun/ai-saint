@@ -6,6 +6,7 @@ Welcome to the AI Saint policies and documentation page. Here you can find impor
 
 - [Privacy Policy](privacy-policy.html)
 - [Terms of Service](terms-of-service.html)
+- [Support](support.html)
 
 ## About AI Saint
 
