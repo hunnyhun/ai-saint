@@ -1,6 +1,11 @@
-theme: jekyll-theme-cayman
+theme: jekyll-theme-minimal
 title: AI Saint
-description: Privacy Policy and Documentation for AI Saint
+description: Policies and Documentation for AI Saint App
 show_downloads: false
 google_analytics:
-markdown: kramdown 
+markdown: kramdown
+plugins:
+  - jekyll-relative-links
+relative_links:
+  enabled: true
+  collections: true 
