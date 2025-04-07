@@ -100,20 +100,16 @@ struct ContentView: View {
     private var mainContent: some View {
         NavigationStack {
             ZStack(alignment: .leading) {
-                // Full screen overlay to handle taps
-                Color.clear
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        if showSidebar {
-                            dismissKeyboardAndCloseSidebar()
-                        }
-                    }
-                
-                // Sidebar overlay for visual effect
+                // Sidebar overlay for visual effect & tap-to-close
                 if showSidebar {
                     Color.black.opacity(0.3)
                         .ignoresSafeArea()
                         .transition(.opacity)
+                        .animation(.easeInOut(duration: 0.3), value: showSidebar)
+                        .onTapGesture {
+                            dismissKeyboardAndCloseSidebar()
+                        }
+                        .zIndex(1)
                 }
                 
                 // Sidebar
@@ -233,7 +229,7 @@ struct ContentView: View {
     
     private func dismissKeyboardAndOpenSidebar() {
         hideKeyboard()
-        withAnimation(.spring()) {
+        withAnimation(.easeInOut(duration: 0.3)) {
             showSidebar = true
             if userStatusManager.state.isPremium {
                 refreshSidebar()
@@ -243,7 +239,7 @@ struct ContentView: View {
     
     private func dismissKeyboardAndCloseSidebar() {
         hideKeyboard()
-        withAnimation(.spring()) {
+        withAnimation(.easeInOut(duration: 0.3)) {
             showSidebar = false
         }
     }

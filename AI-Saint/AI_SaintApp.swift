@@ -112,7 +112,7 @@ struct SplashScreen: View {
                 // Use static text since extensions may not be loaded yet during startup
                 Text("AI Saint")
                     .font(.system(size: 32, weight: .bold))
-                    .foregroundColor(.primary)
+                    .foregroundColor(.yellow)
                 
                 ProgressView()
                     .scaleEffect(1.2)

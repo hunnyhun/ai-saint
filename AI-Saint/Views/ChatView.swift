@@ -36,30 +36,50 @@ struct ChatView: View {
     
     // MARK: - Body
     var body: some View {
-        VStack(spacing: 0) {
-            chatToolbar
+        ZStack {
+            // Main content
+            VStack(spacing: 0) {
+                chatToolbar
+                
+                Divider()
+                    .opacity(0.5)
             
-            Divider()
-                .opacity(0.5)
-        
-            messagesListView
+                messagesListView
+                    .background(Color.white)
+                    .onTapGesture {
+                        dismissKeyboard()
+                    }
+                
+                inputArea
+            }
+            .sheet(isPresented: $showPaywall) {
+                PaywallView()
+            }
+            .background(Color.white)
+            .safeAreaInset(edge: .bottom) {
+                Spacer().frame(height: 5)
+            }
             
-            inputArea
+            // Overlay for sidebar: Handles tap-to-close and swipe-to-close
+            if showSidebarCallback {
+                Color.black.opacity(0.3)
+                    .ignoresSafeArea()
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        closeSidebar()
+                    }
+                    .gesture(
+                        DragGesture()
+                            .onEnded { gesture in
+                                if gesture.translation.width < -50 && abs(gesture.translation.height) < 50 {
+                                    closeSidebar()
+                                }
+                            }
+                    )
+                    .transition(.opacity.animation(.easeInOut(duration: 0.3)))
+            }
         }
-        .sheet(isPresented: $showPaywall) {
-            PaywallView()
-        }
-        // Apply to entire view to ensure taps anywhere dismiss keyboard
-        .onTapGesture {
-            UIApplication.shared.endEditing()
-            isTextFieldFocused = false
-            print("DEBUG: Tapped anywhere in the view, dismissing keyboard")
-        }
-        .background(Color.white)
-        .safeAreaInset(edge: .bottom) {
-            // Provide minimal padding to handle bottom safe area on devices with home indicator
-            Spacer().frame(height: 5)
-        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     
     // MARK: - Toolbar View
@@ -68,7 +88,7 @@ struct ChatView: View {
             // Menu button
             Button(action: {
                 print("[Navigation] Menu button tapped")
-                withAnimation(.spring()) {
+                withAnimation(.easeInOut(duration: 0.3)) {
                     showSidebarCallback = true
                 }
             }) {
@@ -78,20 +98,25 @@ struct ChatView: View {
             }
             .frame(width: 36, height: 36)
             
-            // Title
+            // Title with better styling
             Group {
                 if let conversation = viewModel.currentConversation {
                     Text(conversation.title)
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(.primary)
                         .lineLimit(1)
+                        .multilineTextAlignment(.center)
+                        .transition(.opacity.animation(.easeInOut(duration: 0.8)))
                 } else {
                     Text("newChat".localized)
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(.primary)
+                        .multilineTextAlignment(.center)
+                        .transition(.opacity.animation(.easeInOut(duration: 0.8)))
                 }
             }
-            .frame(maxWidth: .infinity)
+            .id(viewModel.currentConversation?.id ?? "newChat")
+            .frame(maxWidth: .infinity, alignment: .center)
             
             // New Chat button
             Button(action: {
@@ -147,6 +172,7 @@ struct ChatView: View {
                             Spacer()
                         }
                         .padding(.horizontal)
+                        .transition(.opacity.animation(.easeInOut(duration: 0.3)))
                     }
                     
                     // Show premium button only when rate limit error occurs
@@ -279,7 +305,7 @@ struct ChatView: View {
         messageText = ""
         
         // Dismiss keyboard immediately when sending
-        isTextFieldFocused = false
+        dismissKeyboard()
         
         // Trigger scroll to bottom
         shouldScrollToBottom = true
@@ -288,6 +314,21 @@ struct ChatView: View {
         Task {
             await viewModel.sendMessage(text)
         }
+    }
+    
+    // Function to dismiss keyboard
+    private func dismissKeyboard() {
+        UIApplication.shared.endEditing()
+        isTextFieldFocused = false
+        debugLog("Keyboard dismissed")
+    }
+    
+    // Function to close sidebar
+    private func closeSidebar() {
+        withAnimation(.easeInOut(duration: 0.3)) {
+            showSidebarCallback = false
+        }
+        debugLog("Sidebar closed")
     }
     
     // MARK: - Premium Button View

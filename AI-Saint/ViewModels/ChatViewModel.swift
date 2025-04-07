@@ -367,16 +367,14 @@ struct SectionedChatHistory {
                     currentConversationId = newConversationId
                 }
                 
-                // Save updated conversation
-                saveConversation()
+                // Save updated conversation with title from backend
+                saveConversation(withTitle: responseData["title"] as? String)
             } else {
                 // Handle empty response
                 setErrorMessage("Received empty response from server")
             }
-        } catch let apiError as CloudFunctionError {
+        } catch let apiError as APIError {
             // Handle API-specific errors
-            
-            // Special handling for rate limiting
             if apiError.localizedDescription.contains("Message limit exceeded") {
                 isRateLimited = true
                 setErrorMessage("Message limit exceeded. Please upgrade to premium for unlimited messages.")
@@ -403,19 +401,19 @@ struct SectionedChatHistory {
     }
     
     // MARK: - Saving Conversation
-    private func saveConversation() {
+    private func saveConversation(withTitle title: String? = nil) {
         // Cancel any pending save task
         conversationSaveTask?.cancel()
         
         // Create a new save task
         conversationSaveTask = Task {
-            // Create a conversation title from first user message
-            let title = generateTitle()
+            // Use provided title or generate one locally if not available
+            let finalTitle = title ?? generateTitle()
             
             // Create a conversation object
             let conversation = ChatHistory(
                 id: currentConversationId,
-                title: title,
+                title: finalTitle,
                 timestamp: Date(),
                 messages: messages
             )

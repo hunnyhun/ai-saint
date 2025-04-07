@@ -211,22 +211,27 @@ struct SidebarView: View {
                 
                 // Chat title and preview
                 VStack(alignment: .leading, spacing: 2) {
-                    // Title
+                    // Title with better styling
                     Text(history.title)
                         .lineLimit(1)
                         .font(.subheadline)
-                        .fontWeight(.medium)
-                        .foregroundColor(.primary)
+                        .fontWeight(.semibold)
+                        .foregroundColor(chatViewModel.currentConversation?.id == history.id ? .blue : .primary)
                     
-                    // Last message preview
+                    // Last message preview with better styling
                     Text(history.lastMessage)
                         .lineLimit(1)
                         .font(.caption)
-                        .foregroundColor(.gray)
+                        .foregroundColor(.secondary)
                 }
                 
                 Spacer(minLength: 4)
-            }
+                
+                // Add timestamp if needed
+                Text(history.timestamp, style: .date)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 10)
             .padding(.horizontal, 12)

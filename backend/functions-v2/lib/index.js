@@ -156,6 +156,72 @@ export const getChatHistoryV2 = onCall({
         throw new Error('Failed to fetch chat history');
     }
 });
+// Generate a meaningful title for a conversation based on user message and AI response
+async function generateConversationTitle(userMessage, aiResponse) {
+    try {
+        console.log('📝 Generating conversation title from:', {
+            userMessage: userMessage.substring(0, 50) + '...',
+            aiResponse: aiResponse.substring(0, 50) + '...'
+        });
+        // Get the API key using the defineSecret API
+        const apiKey = geminiSecretKey.value();
+        if (!apiKey) {
+            console.error('❌ Gemini API key is not found');
+            return "Spiritual Conversation";
+        }
+        // Initialize Gemini with the more capable model
+        const genAI = new GoogleGenerativeAI(apiKey);
+        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
+        // Create improved prompt for title generation
+        const prompt = `Create a meaningful, spiritual conversation title (4-5 words max) that captures the essence of this conversation:
+
+User's Message: "${userMessage}"
+AI's Response: "${aiResponse}"
+
+Guidelines:
+- Make it spiritual and meaningful
+- Focus on the core theme or lesson
+- Keep it concise (4-5 words max)
+- Make it unique and specific to this conversation
+- Do not include quotes or special characters
+
+Examples of good titles:
+- Finding Inner Peace
+- Understanding God's Love
+- Prayer Guidance
+- Seeking Forgiveness
+- Spiritual Growth Journey
+
+Return only the title, nothing else.`;
+        // Add detailed logging for the prompt
+        console.log('📝 Full prompt for title generation:');
+        console.log('----------------------------------------');
+        console.log(prompt);
+        console.log('----------------------------------------');
+        console.log('📝 Prompt components:');
+        console.log('- User message length:', userMessage.length);
+        console.log('- AI response length:', aiResponse.length);
+        console.log('- Total prompt length:', prompt.length);
+        // Generate title using Gemini
+        console.log('🤖 Generating title with Gemini 1.5 Pro...');
+        const result = await model.generateContent(prompt);
+        const title = result.response.text().trim();
+        console.log('📝 Raw title from Gemini:', title);
+        // Ensure the title isn't too long and remove quotes if present
+        const cleanTitle = title.replace(/["']/g, '').trim();
+        const finalTitle = cleanTitle.length > 30 ? cleanTitle.substring(0, 27) + '...' : cleanTitle;
+        console.log('✅ Generated title:', finalTitle);
+        return finalTitle;
+    }
+    catch (error) {
+        console.error('❌ Error generating title:', error);
+        // Create a simple title from the first few words of the user message
+        const words = userMessage.split(' ').slice(0, 4);
+        const fallbackTitle = words.join(' ') + (words.length > 4 ? '...' : '');
+        console.log('📝 Using fallback title:', fallbackTitle);
+        return fallbackTitle;
+    }
+}
 // Chat Message Function
 export const processChatMessageV2 = onCall({
     region: 'us-central1',
@@ -248,7 +314,7 @@ export const processChatMessageV2 = onCall({
             }
             console.log('✅ Successfully retrieved API key, length:', apiKey.length);
             const genAI = new GoogleGenerativeAI(apiKey);
-            // Updated model name - Gemini 1.5 Pro is the current model name
+            // Updated model name - Using Gemini 1.5 Pro for main chat (keep this for better responses)
             const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
             // Generate response using Gemini
             console.log('🤖 Generating response with Gemini...');
@@ -261,14 +327,36 @@ export const processChatMessageV2 = onCall({
                 content: response,
                 timestamp: new Date().toISOString()
             };
-            // Update conversation
+            // Generate title for new conversations or if title is missing
+            let title;
             try {
-                console.log('📝 Updating conversation in Firestore:', conversationRef.path);
-                await conversationRef.set({
+                const existingTitle = conversationData.title;
+                if (!existingTitle || !conversationId) {
+                    console.log('📝 Generating new title for conversation');
+                    title = await generateConversationTitle(message, response);
+                }
+                else {
+                    console.log('📝 Using existing title:', existingTitle);
+                    title = existingTitle;
+                }
+            }
+            catch (error) {
+                console.error('❌ Error in title generation:', error);
+                title = "Spiritual Conversation";
+            }
+            // Update conversation with new title
+            try {
+                console.log('📝 Updating conversation in Firestore:', {
+                    path: conversationRef.path,
+                    title: title
+                });
+                const updateData = {
                     messages: [...conversationData.messages, userMessage, assistantMessage],
-                    lastUpdated: FieldValue.serverTimestamp()
-                }, { merge: true });
-                console.log('✅ Conversation updated successfully');
+                    lastUpdated: FieldValue.serverTimestamp(),
+                    title: title
+                };
+                await conversationRef.set(updateData, { merge: true });
+                console.log('✅ Conversation updated successfully with title');
             }
             catch (error) {
                 console.error('❌ Error updating conversation:', error);
@@ -296,7 +384,8 @@ export const processChatMessageV2 = onCall({
                 role: 'assistant',
                 message: response,
                 response: response,
-                conversationId: conversationRef.id
+                conversationId: conversationRef.id,
+                title: title
             };
         }
         catch (error) {
