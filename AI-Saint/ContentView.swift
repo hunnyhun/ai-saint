@@ -23,7 +23,6 @@ struct ContentView: View {
     @State private var lastRefreshTime = Date()
     @Environment(\.scenePhase) private var scenePhase
     @State private var sidebarView: SidebarView?
-    @State private var showNotificationPermissionAlert = false
     @State private var justLoggedIn = false  // Track if user just logged in
     
     // New states for daily quote view
@@ -73,12 +72,6 @@ struct ContentView: View {
                 // Refresh data when app becomes active
                 if userStatusManager.state.isAuthenticated {
                     chatViewModel.loadChatHistory()
-                    
-                    // Only check notification permission on app becoming active
-                    // if we didn't just log in (to avoid double prompts)
-                    if !justLoggedIn {
-                        checkNotificationPermission(afterDelay: 1.0)
-                    }
                     
                     // Reset the just logged in flag
                     justLoggedIn = false
@@ -178,17 +171,6 @@ struct ContentView: View {
                     // Regular view
                     DailyQuoteView(fromNotification: false)
                 }
-            }
-            // Add notification permission alert
-            .alert("Enable Spiritual Notifications", isPresented: $showNotificationPermissionAlert) {
-                Button("Allow", role: .none) {
-                    Task {
-                        await requestNotificationPermission()
-                    }
-                }
-                Button("Not Now", role: .cancel) {}
-            } message: {
-                Text("We'd like to send you daily spiritual quotes to inspire your journey.")
             }
             .gesture(
                 DragGesture()
@@ -293,13 +275,12 @@ struct ContentView: View {
             let isAuthorized = await notificationManager.checkNotificationStatus()
             print("📱 [ContentView] Notification permission check: \(isAuthorized ? "Authorized" : "Not Authorized")")
             
-            // If not authorized, show permission prompt after delay
-            if !isAuthorized {
-                // Show after delay to allow transitions to complete
-                DispatchQueue.main.asyncAfter(deadline: .now() + afterDelay) {
-                    print("📱 [ContentView] Showing notification permission alert")
-                    showNotificationPermissionAlert = true
-                }
+            // If not authorized and this is a first login, request permission directly
+            if !isAuthorized && justLoggedIn {
+                // Request after delay to allow transitions to complete
+                try? await Task.sleep(nanoseconds: UInt64(afterDelay * 1_000_000_000))
+                print("📱 [ContentView] Directly requesting system notification permission")
+                await requestNotificationPermission()
             }
         }
     }
@@ -308,7 +289,7 @@ struct ContentView: View {
     private func requestNotificationPermission() async {
         // Directly call the centralized permission request method
         print("📱 [ContentView] Requesting notification permission")
-        await notificationManager.requestNotificationPermission()
+        let _ = await notificationManager.requestNotificationPermission()
     }
 }
 

@@ -11,6 +11,7 @@ enum CloudFunctionError: Error {
     case serverError(String)
     case parseError
     case networkError(Error)
+    case rateLimitExceeded(String)
     
     var localizedDescription: String {
         switch self {
@@ -22,6 +23,8 @@ enum CloudFunctionError: Error {
             return "Failed to parse server response"
         case .networkError(let error):
             return "Network error: \(error.localizedDescription)"
+        case .rateLimitExceeded(let message):
+            return message
         }
     }
 }
@@ -89,9 +92,28 @@ enum CloudFunctionError: Error {
             
             // Check if it's a Firebase Functions error
             let nsError = error as NSError
-            if nsError.domain.contains("functions") {
-                throw CloudFunctionError.serverError(nsError.localizedDescription)
+            if nsError.domain == FunctionsErrorDomain { // Use FunctionsErrorDomain constant
+                // Check the specific error code
+                if let code = FunctionsErrorCode(rawValue: nsError.code) {
+                    switch code {
+                    case .resourceExhausted:
+                        // Extract the message from details if possible, otherwise use default
+                        let message = (nsError.userInfo[FunctionsErrorDetailsKey] as? String) ?? "Rate limit exceeded."
+                        print("🌩️ Rate limit exceeded: \(message)")
+                        throw CloudFunctionError.rateLimitExceeded(message)
+                    default:
+                        // Handle other Firebase function errors
+                        print("🌩️ Firebase Functions server error: \(nsError.localizedDescription)")
+                        throw CloudFunctionError.serverError(nsError.localizedDescription)
+                    }
+                } else {
+                    // Fallback for unknown Firebase function errors
+                    print("🌩️ Unknown Firebase Functions error code: \(nsError.code)")
+                    throw CloudFunctionError.serverError(nsError.localizedDescription)
+                }
             } else {
+                // Handle non-Firebase network errors
+                print("🌩️ Network error: \(error.localizedDescription)")
                 throw CloudFunctionError.networkError(error)
             }
         }
@@ -152,9 +174,32 @@ enum CloudFunctionError: Error {
             
             // Check if it's a Firebase Functions error
             let nsError = error as NSError
-            if nsError.domain.contains("functions") {
-                throw CloudFunctionError.serverError(nsError.localizedDescription)
+            if nsError.domain == FunctionsErrorDomain { // Use FunctionsErrorDomain constant
+                // Check the specific error code
+                if let code = FunctionsErrorCode(rawValue: nsError.code) {
+                    switch code {
+                    case .resourceExhausted:
+                        // Extract the message from details if possible, otherwise use default
+                        let message = (nsError.userInfo[FunctionsErrorDetailsKey] as? String) ?? "Rate limit exceeded."
+                        print("🌩️ Rate limit exceeded: \(message)")
+                        throw CloudFunctionError.rateLimitExceeded(message)
+                    // Add other specific codes if needed, e.g.:
+                    // case .unauthenticated:
+                    //    print("🌩️ Unauthenticated error from Functions")
+                    //    throw CloudFunctionError.notAuthenticated
+                    default:
+                        // Handle other Firebase function errors
+                        print("🌩️ Firebase Functions server error: \(nsError.localizedDescription)")
+                        throw CloudFunctionError.serverError(nsError.localizedDescription)
+                    }
+                } else {
+                    // Fallback for unknown Firebase function errors
+                    print("🌩️ Unknown Firebase Functions error code: \(nsError.code)")
+                    throw CloudFunctionError.serverError(nsError.localizedDescription)
+                }
             } else {
+                // Handle non-Firebase network errors
+                print("🌩️ Network error: \(error.localizedDescription)")
                 throw CloudFunctionError.networkError(error)
             }
         }

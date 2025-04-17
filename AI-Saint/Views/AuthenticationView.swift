@@ -9,10 +9,10 @@ struct HolyBackground: View {
         // Base gradient
         LinearGradient(
             colors: [
-                Color(hex: "FFEF00"),  // Bright gold
-                Color(hex: "FFE066"),  // Light gold
-                Color(hex: "FFFFC5"),  // Warm yellow
-                Color(hex: "FFE066")   // Light gold
+                Color(hex: "FFEF00"),  // Slightly deeper gold (was FFEF00)
+                Color(hex: "FFE066"),  // Slightly darker light gold (was FFE066)
+                Color(hex: "FFF59D"),  // Less pale warm yellow (was FFFFC5)
+                Color(hex: "FFCA28")  
             ],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
@@ -186,7 +186,7 @@ struct AuthenticationView: View {
                         TraditionalCross()
                             .padding(.top, 40) // Reduced from 60 to 40 to move up
                         
-                        Text("ConfessAI")
+                        Text("AI-Saint")
                             .font(.custom("Avenir-Heavy", size: 44))
                             .fontWeight(.bold)
                             .foregroundStyle(.white)

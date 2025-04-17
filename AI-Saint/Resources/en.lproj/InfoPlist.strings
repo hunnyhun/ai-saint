@@ -1,0 +1,7 @@
+/* 
+  InfoPlist.strings
+  AI-Saint
+*/
+
+"NSUserNotificationUsageDescription" = "We'd like to send you daily spiritual quotes to inspire your journey.";
+"NSAppleMusicUsageDescription" = "We need access to send you daily inspirational quotes."; 

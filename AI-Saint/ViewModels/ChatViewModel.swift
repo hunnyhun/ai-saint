@@ -4,6 +4,7 @@ import RevenueCat
 // Debug log
 import Firebase
 import FirebaseAuth
+import FirebaseFunctions // For FunctionsErrorCode
 
 // Chat history date section for UI grouping
 enum ChatHistorySection: String, CaseIterable, Identifiable {
@@ -373,13 +374,15 @@ struct SectionedChatHistory {
                 // Handle empty response
                 setErrorMessage("Received empty response from server")
             }
-        } catch let apiError as APIError {
-            // Handle API-specific errors
-            if apiError.localizedDescription.contains("Message limit exceeded") {
+        } catch let cloudError as CloudFunctionError {
+            // Handle Cloud Function specific errors
+            switch cloudError {
+            case .rateLimitExceeded:
                 isRateLimited = true
-                setErrorMessage("Message limit exceeded. Please upgrade to premium for unlimited messages.")
-            } else {
-                setErrorMessage(apiError.localizedDescription)
+                setErrorMessage(cloudError.localizedDescription)
+                print("[Chat] Rate limit exceeded, showing upgrade UI")
+            default:
+                setErrorMessage(cloudError.localizedDescription)
             }
         } catch {
             // Handle unexpected errors
@@ -393,8 +396,9 @@ struct SectionedChatHistory {
     
     // Helper method to set error message
     private func setErrorMessage(_ message: String?) {
-        // FIXME: Fix error property assignment issue
-        // error = message
+        // Assign error message to the property
+        self.error = message
+        // Also log it for debugging
         if let message = message {
             print("[Chat] Error: \(message)")
         }

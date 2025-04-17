@@ -2,6 +2,7 @@ import Foundation
 import RevenueCat
 import FirebaseAnalytics
 import SwiftUI
+import FirebaseAuth
 
 // MARK: - Subscription Manager
 @Observable final class SubscriptionManager: NSObject {
@@ -21,12 +22,29 @@ import SwiftUI
     
     // MARK: - Setup
     private func setupRevenueCat() {
-        // Configure RevenueCat with your API key
-        Purchases.configure(withAPIKey: "appl_WCSsEAgrWXsVeINtelhrPJJuklb")
+        // Configure RevenueCat with your API key, linking to Firebase UID
+        print("DEBUG: [SubscriptionManager] Setting up RevenueCat...")
+        
+        // Get current Firebase User ID if available
+        let firebaseUserID = Auth.auth().currentUser?.uid
+        if let uid = firebaseUserID {
+             print("DEBUG: [SubscriptionManager] Firebase User ID found: \(uid). Configuring RevenueCat with this App User ID.")
+        } else {
+             print("DEBUG: [SubscriptionManager] No Firebase User ID found. Configuring RevenueCat anonymously.")
+        }
+        
+        // Use the Configuration Builder to set the App User ID
+        let builder = Configuration.Builder(withAPIKey: "appl_WCSsEAgrWXsVeINtelhrPJJuklb")
+        
+        if let uid = firebaseUserID {
+            builder.with(appUserID: uid)
+        }
+        
+        Purchases.configure(with: builder.build())
         Purchases.shared.delegate = self
-        
-        print("DEBUG: RevenueCat configured")
-        
+
+        print("DEBUG: RevenueCat configured. Current App User ID: \(Purchases.shared.appUserID ?? "Anonymous")")
+
         // Get current subscription status
         Task {
             await refreshSubscriptionStatus()
@@ -38,9 +56,36 @@ import SwiftUI
     /// Refresh the current subscription status
     @MainActor
     func refreshSubscriptionStatus() async {
+        // Add login/logout handling for App User ID
+        let firebaseUserID = Auth.auth().currentUser?.uid
+        let currentAppUserID = Purchases.shared.appUserID
+
+        // If Firebase user exists but RC App User ID doesn't match (or is anonymous)
+        if let uid = firebaseUserID, uid != currentAppUserID {
+            print("DEBUG: [SubscriptionManager] Firebase UID (\(uid)) doesn't match RC App User ID (\(currentAppUserID ?? "nil")). Logging in to RevenueCat.")
+            do {
+                let (customerInfo, created) = try await Purchases.shared.logIn(uid)
+                print("DEBUG: [SubscriptionManager] RevenueCat login successful. New customer: \(created). Customer Info: \(customerInfo)")
+            } catch {
+                print("ERROR: [SubscriptionManager] RevenueCat login failed: \(error.localizedDescription)")
+                // Decide how to handle login failure - maybe proceed with anonymous ID or show error
+            }
+        } 
+        // If Firebase user is nil but RC App User ID exists
+        else if firebaseUserID == nil, currentAppUserID != nil {
+            print("DEBUG: [SubscriptionManager] Firebase user logged out, but RC App User ID (\(currentAppUserID ?? "nil")) exists. Logging out from RevenueCat.")
+            do {
+                let customerInfo = try await Purchases.shared.logOut()
+                print("DEBUG: [SubscriptionManager] RevenueCat logout successful. Customer Info: \(customerInfo)")
+            } catch {
+                print("ERROR: [SubscriptionManager] RevenueCat logout failed: \(error.localizedDescription)")
+            }
+        }
+
+        // Proceed with fetching customer info after potential login/logout
         do {
-            print("DEBUG: [SubscriptionManager] Starting subscription refresh")
-            
+            print("DEBUG: [SubscriptionManager] Starting subscription refresh with App User ID: \(Purchases.shared.appUserID ?? "Anonymous")")
+
             let customerInfo = try await Purchases.shared.customerInfo()
             print("DEBUG: [SubscriptionManager] Got customer info - Entitlements: \(customerInfo.entitlements.all)")
             
@@ -148,35 +193,52 @@ import SwiftUI
         do {
             print("DEBUG: [SubscriptionManager] Starting purchase restoration")
             
+            // Ensure user is logged in to Firebase before restoring
+            guard let firebaseUserID = Auth.auth().currentUser?.uid else {
+                print("ERROR: [SubscriptionManager] User must be logged in to restore purchases.")
+                // Optionally throw a specific error
+                throw SubscriptionError.notLoggedIn
+            }
+            print("DEBUG: [SubscriptionManager] Current Firebase User ID: \(firebaseUserID)")
+
             // First get current customer info for comparison
             let beforeInfo = try await Purchases.shared.customerInfo()
-            print("DEBUG: [SubscriptionManager] Before restore - Entitlements: \(beforeInfo.entitlements.all)")
-            
+            print("DEBUG: [SubscriptionManager] Before restore - AppUserID: \(beforeInfo.originalAppUserId), Entitlements: \(beforeInfo.entitlements.all)")
+
             // Perform restore
             let customerInfo = try await Purchases.shared.restorePurchases()
-            print("DEBUG: [SubscriptionManager] After restore - Entitlements: \(customerInfo.entitlements.all)")
-            
+            print("DEBUG: [SubscriptionManager] After restore - AppUserID: \(customerInfo.originalAppUserId), Entitlements: \(customerInfo.entitlements.all)")
+
             // Check if restore was successful by looking for active entitlements
-            if let monthlyPremium = customerInfo.entitlements["Monthly Premium"] {
-                print("DEBUG: [SubscriptionManager] Monthly Premium entitlement found:")
-                print("  - isActive: \(monthlyPremium.isActive)")
-                print("  - Latest purchase date: \(String(describing: monthlyPremium.latestPurchaseDate))")
-                print("  - Expiration date: \(String(describing: monthlyPremium.expirationDate))")
-                print("  - Store: \(String(describing: monthlyPremium.store))")
-                print("  - Is sandbox: \(String(describing: monthlyPremium.isSandbox))")
+            let isPremiumActive = customerInfo.entitlements["Monthly Premium"]?.isActive == true
+            let restoredAppUserID = customerInfo.originalAppUserId // Use originalAppUserId which should be stable
+            
+            print("DEBUG: [SubscriptionManager] Restore check: isPremiumActive=\(isPremiumActive), restoredAppUserID=\(restoredAppUserID ?? "nil"), currentFirebaseUID=\(firebaseUserID)")
+
+            if isPremiumActive {
+                // **CRITICAL CHECK**: Validate that the restored App User ID matches the current Firebase User ID
+                if restoredAppUserID == firebaseUserID {
+                    print("DEBUG: [SubscriptionManager] Restore successful and App User ID matches Firebase UID. Granting premium.")
+                    currentSubscription = .premium
+                } else {
+                    // Mismatch detected! Do not grant premium.
+                    print("WARN: [SubscriptionManager] Restore successful, but App User ID (\(restoredAppUserID ?? "nil")) does not match current Firebase UID (\(firebaseUserID)). Potential abuse attempt or account switching. Not granting premium.")
+                    currentSubscription = .free // Keep user as free
+                    // Optionally show an alert to the user explaining the mismatch.
+                     errorMessage = "Restored purchase belongs to a different user account."
+                     // You might want to throw a specific error here instead of just setting errorMessage
+                     // throw SubscriptionError.restoreMismatch 
+                }
             } else {
-                print("DEBUG: [SubscriptionManager] No Monthly Premium entitlement found")
+                 print("DEBUG: [SubscriptionManager] No active 'Monthly Premium' entitlement found after restore.")
+                 currentSubscription = .free
             }
-            
-            // Update subscription status
-            let isPremium = customerInfo.entitlements["Monthly Premium"]?.isActive == true
-            currentSubscription = isPremium ? .premium : .free
-            
-            print("DEBUG: [SubscriptionManager] Restore completed - Current subscription: \(currentSubscription.rawValue)")
-            
-            // Notify UserStatusManager to update its state
+
+            print("DEBUG: [SubscriptionManager] Restore completed - Final subscription: \(currentSubscription.rawValue)")
+
+            // Notify UserStatusManager to update its state (only if necessary)
             await UserStatusManager.shared.refreshUserState()
-            
+
         } catch {
             print("ERROR: [SubscriptionManager] Restore failed with error: \(error.localizedDescription)")
             if let rcError = error as? RevenueCat.ErrorCode {
@@ -191,11 +253,17 @@ import SwiftUI
 extension SubscriptionManager {
     enum SubscriptionError: LocalizedError {
         case noOfferings
-        
+        case notLoggedIn // Added error for restore attempt when not logged in
+        case restoreMismatch // Added error for App User ID mismatch during restore
+
         var errorDescription: String? {
             switch self {
             case .noOfferings:
                 return "No subscription offerings available"
+            case .notLoggedIn:
+                return "You must be logged in to restore purchases."
+            case .restoreMismatch:
+                 return "The restored purchase is linked to a different account."
             }
         }
     }

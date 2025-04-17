@@ -116,8 +116,6 @@ struct SidebarView: View {
             }
             .frame(maxHeight: .infinity)
             
-            Divider()
-            
             // User profile at bottom
             HStack(spacing: 12) {
                 // User Info
@@ -156,17 +154,17 @@ struct SidebarView: View {
                     Button(action: {
                         showSettings = true
                     }) {
-                        Image(systemName: "gearshape.fill")
+                        Image(systemName: "ellipsis")
                             .font(.system(size: 18))
                             .foregroundColor(.gray)
                             .padding(8)
-                            .background(Circle().fill(Color(.systemBackground)))
                     }
                 }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
-            .background(Color(.secondarySystemBackground))
+            .background(Color(.systemBackground))
+            .shadow(color: Color.black.opacity(0.1), radius: 3, x: 0, y: -2)
         }
         .background(Color(.systemBackground))
         .sheet(isPresented: $showSettings) {

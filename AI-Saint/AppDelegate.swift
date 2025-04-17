@@ -28,13 +28,17 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         
         // Register for app lifecycle notifications
         NotificationCenter.default.addObserver(self, 
-                                           selector: #selector(applicationDidBecomeActive), 
+                                           selector: #selector(handleApplicationBecameActive), 
                                            name: UIApplication.didBecomeActiveNotification, 
                                            object: nil)
         
         // Always reset badge count on app launch
         print("📱 [AppDelegate] App launching, resetting badge count")
-        UIApplication.shared.applicationIconBadgeNumber = 0
+        UNUserNotificationCenter.current().setBadgeCount(0) { error in
+            if let error = error {
+                print("❌ [AppDelegate] Error resetting badge count on launch: \(error.localizedDescription)")
+            }
+        }
         NotificationManager.shared.unreadNotificationCount = 0
         NotificationManager.shared.saveUnreadNotificationCount()
         
@@ -135,7 +139,11 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         }
         
         // Clear badge count when notification is tapped
-        UIApplication.shared.applicationIconBadgeNumber = 0
+        UNUserNotificationCenter.current().setBadgeCount(0) { error in
+            if let error = error {
+                print("❌ [AppDelegate] Error resetting badge count on notification tap: \(error.localizedDescription)")
+            }
+        }
         NotificationManager.shared.markNotificationsAsRead()
         
         // Handle the notification tap
@@ -170,11 +178,21 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         print("❌ [AppDelegate] APNs registration failed: \(error.localizedDescription)")
     }
     
+    // Enforce portrait orientation for all view controllers
+    func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
+        // Only allow portrait orientation
+        return .portrait
+    }
+    
     // Handle app did become active notification
-    @objc func applicationDidBecomeActive(_ notification: Notification) {
+    @objc func handleApplicationBecameActive(_ notification: Notification) {
         // Reset badge count whenever app becomes active
         print("📱 [AppDelegate] App became active, resetting badge count")
-        UIApplication.shared.applicationIconBadgeNumber = 0
+        UNUserNotificationCenter.current().setBadgeCount(0) { error in
+            if let error = error {
+                print("❌ [AppDelegate] Error resetting badge count on app active: \(error.localizedDescription)")
+            }
+        }
         NotificationManager.shared.unreadNotificationCount = 0
         NotificationManager.shared.saveUnreadNotificationCount()
         

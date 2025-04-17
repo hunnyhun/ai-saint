@@ -25,6 +25,8 @@
 	</array>
 	<key>NSAppleMusicUsageDescription</key>
 	<string>We need access to send you daily inspirational quotes.</string>
+	<key>NSUserNotificationUsageDescription</key>
+	<string>We'd like to send you daily spiritual quotes to inspire your journey.</string>
 	<key>CFBundleLocalizations</key>
 	<array>
 		<string>en</string>
@@ -36,5 +38,15 @@
 	</array>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
+	<key>UILaunchStoryboardName</key>
+	<string>Launch Screen</string>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
 </dict>
 </plist>

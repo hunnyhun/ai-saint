@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
-import { onCall } from 'firebase-functions/v2/https';
+import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { defineSecret } from 'firebase-functions/params';
@@ -120,17 +120,17 @@ async function checkMessageLimits(uid: string): Promise<boolean> {
         if (userDoc && userDoc.exists) {
             const userData = userDoc.data();
             const messageCount = userData?.messageCount || 0;
-            const messageLimit = 30; // Free tier message limit
+            const messageLimit = 5; // Free tier lifetime message limit
             
-            console.log('🔢 User message count:', messageCount, 'limit:', messageLimit);
+            console.log('🔢 User lifetime message count:', messageCount, 'limit:', messageLimit);
             
             // Return true if user is within limits
             return messageCount < messageLimit;
         }
         
-        // Default to allowing if no user document exists yet
-        console.log('🔢 No existing message count found, allowing as new user');
-        return true;
+        // Default to allowing if no user document exists yet (first message)
+        console.log('🔢 No existing message count found, allowing first message');
+        return true; // Allow the first message which will increment the count to 1
     } catch (error) {
         console.error('❌ Error checking message limits:', error);
         // Default to allowing access if there's an error checking
@@ -303,8 +303,9 @@ export const processChatMessageV2 = onCall({
         if (!isPremium) {
             const withinLimits = await checkMessageLimits(uid);
             if (!withinLimits) {
-                console.log('🚫 Free tier user has exceeded message limit');
-                throw new Error('Message limit exceeded. Please upgrade to premium for unlimited messages.');
+                console.log('🚫 Free tier user has exceeded lifetime message limit');
+                // Throw a specific HttpsError for rate limiting
+                throw new HttpsError('resource-exhausted', 'You have reached the message limit for the free tier. Please upgrade to premium for unlimited messages.');
             }
         }
         
@@ -366,7 +367,7 @@ export const processChatMessageV2 = onCall({
             // Debug logs for the API key
             if (!apiKey) {
                 console.error('❌ Gemini API key is not found');
-                throw new Error('API key not found');
+                throw new HttpsError('internal', 'API key not found');
             }
             
             console.log('✅ Successfully retrieved API key, length:', apiKey.length);
@@ -452,10 +453,22 @@ export const processChatMessageV2 = onCall({
             };
         } catch (error) {
             console.error('❌ Error with Gemini API:', error);
-            throw new Error('Failed to generate AI response. Please try again later.');
+            // Preserve any existing HttpsError
+            if (error instanceof HttpsError) {
+                console.log('🚫 Rethrowing HttpsError from Gemini call:', error.code, error.message);
+                throw error;
+            }
+            // For other errors, use a specific HttpsError for better client handling
+            throw new HttpsError('internal', 'Failed to generate AI response. Please try again later.');
         }
     } catch (error) {
         console.error('❌ Error processing message:', error);
+        // Preserve HttpsError instances to keep error codes (especially for rate limiting)
+        if (error instanceof HttpsError) {
+            console.log('🚫 Rethrowing original HttpsError:', error.code, error.message);
+            throw error;
+        }
+        // For other errors, use generic error
         throw new Error('Failed to process message');
     }
 });
@@ -518,7 +531,7 @@ async function generateSpiritualQuote(previousMessages: string[]): Promise<strin
 // Rule: Always add debug logs
 // Scheduled Daily Quote Sender - Run once per hour
 export const scheduledDailyQuotes = onSchedule({
-    schedule: '0 * * * *', // Every hour at minute 0
+    schedule: '0 * * * *', // Once per hour (at minute 0)
     region: 'us-central1',
     secrets: [geminiSecretKey],
     timeZone: 'UTC',
@@ -544,17 +557,35 @@ export const scheduledDailyQuotes = onSchedule({
             let successCount = 0;
             let errorCount = 0;
             let skippedDueToTimezone = 0;
-            
+            let skippedDueToLimit = 0; // Add counter for skipped free users
+
+            // Define the free quote limit
+            const FREE_QUOTE_LIMIT = 7;
+
             // The current UTC hour
-            const currentUtcHour = new Date().getUTCHours(); 
+            const currentUtcHour = new Date().getUTCHours();
             console.log(`⏰ [QUOTE JOB] Current UTC hour: ${currentUtcHour}`);
-            
+
             // Process each user
             for (const userDoc of usersSnapshot.docs) {
                 const userId = userDoc.id;
+                const userData = userDoc.data() || {}; // Get user data early
                 console.log(`👤 [QUOTE JOB] Processing user ${userId}`);
-                
+
                 try {
+                    // Check user subscription status first
+                    const isPremium = await checkUserSubscription(userId);
+                    const dailyQuoteCount = userData.dailyQuoteCount || 0; // Get current quote count
+
+                    console.log(`💲 [QUOTE JOB] User ${userId} status: ${isPremium ? 'Premium' : 'Free'}, Quote count: ${dailyQuoteCount}`);
+
+                    // Skip free users who have reached their limit
+                    if (!isPremium && dailyQuoteCount >= FREE_QUOTE_LIMIT) {
+                        console.log(`🚫 [QUOTE JOB] Skipping user ${userId} - Free tier quote limit (${FREE_QUOTE_LIMIT}) reached.`);
+                        skippedDueToLimit++;
+                        continue;
+                    }
+
                     // For each user, get their devices with notifications enabled
                     const devicesSnapshot = await db.collection('users')
                         .doc(userId)
@@ -658,6 +689,27 @@ export const scheduledDailyQuotes = onSchedule({
                     // At this point, we've decided to send a notification to this user
                     console.log(`⏰ [QUOTE JOB] Sending notification to user ${userId} (local hour: ${userLocalHour})`);
                     
+                    // ---- START: Increment quote count for free users BEFORE sending ----
+                    let limitReachedByThisQuote = false;
+                    if (!isPremium) {
+                        const newDailyQuoteCount = dailyQuoteCount + 1;
+                        if (newDailyQuoteCount === FREE_QUOTE_LIMIT) {
+                            limitReachedByThisQuote = true;
+                            console.log(`🔔 [QUOTE JOB] User ${userId} will reach the free quote limit with this message.`);
+                        }
+
+                        try {
+                            await userDoc.ref.update({
+                                dailyQuoteCount: FieldValue.increment(1)
+                            });
+                            console.log(`📈 [QUOTE JOB] Incremented dailyQuoteCount for free user ${userId} to ${newDailyQuoteCount}`);
+                        } catch (updateError) {
+                            console.error(`❌ [QUOTE JOB] Failed to increment dailyQuoteCount for ${userId}:`, updateError);
+                            // Decide if we should still send the notification? Let's continue for now.
+                        }
+                    }
+                    // ---- END: Increment quote count ----
+
                     totalDevicesProcessed += devices.length;
                     
                     // Fetch user's chat history for personalization
@@ -766,7 +818,8 @@ export const scheduledDailyQuotes = onSchedule({
                                     source: 'scheduled',
                                     timestamp: new Date().toISOString(),
                                     quoteId: quoteId || '',
-                                    badgeCount: newBadgeCount.toString() // Use newly read count
+                                    badgeCount: newBadgeCount.toString(), // Use newly read count
+                                    limitReached: limitReachedByThisQuote.toString() // Add the flag here
                                 },
                                 // Critical for iOS background delivery
                                 apns: {
@@ -835,7 +888,8 @@ export const scheduledDailyQuotes = onSchedule({
                 totalDevices: totalDevicesProcessed,
                 successfulNotifications: successCount,
                 failedNotifications: errorCount,
-                skippedDueToTimezone: skippedDueToTimezone
+                skippedDueToTimezone: skippedDueToTimezone,
+                skippedDueToLimit: skippedDueToLimit // Add new metric
             });
             
         } catch (queryError) {

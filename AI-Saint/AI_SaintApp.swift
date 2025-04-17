@@ -6,7 +6,7 @@ import SwiftUI
 struct DigitalConfessionApp: App {
     // MARK: - Properties
     @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
-    @StateObject private var appCoordinator = AppCoordinator()
+    // @StateObject private var appCoordinator = AppCoordinator() // REMOVE OR COMMENT OUT
     
     // Track language changes to restart app
     @Environment(\.locale) private var locale
@@ -16,26 +16,26 @@ struct DigitalConfessionApp: App {
     var body: some Scene {
         WindowGroup {
             NavigationStack {
-                ZStack {
-                    // Content visibility controlled by coordinator
-                    ContentView()
-                        .opacity(appCoordinator.isContentVisible ? 1 : 0)
-                        .environment(\.scenePhase, .active) // Ensure the app knows it's active
-                    
-                    // Splash screen visibility controlled by coordinator
-                    if !appCoordinator.isContentVisible {
-                        SplashScreen()
-                            .transition(.opacity)
-                    }
-                }
-                .animation(.easeInOut(duration: 0.5), value: appCoordinator.isContentVisible)
+                // REMOVE the surrounding ZStack if it's no longer needed,
+                // or just display ContentView directly
+                ContentView()
+                    // .opacity(appCoordinator.isContentVisible ? 1 : 0) // REMOVE
+                    .environment(\.scenePhase, .active) // Ensure the app knows it's active
+                
+                // REMOVE the conditional splash screen block:
+                // if !appCoordinator.isContentVisible {
+                //    SplashScreen()
+                //        .transition(.opacity)
+                // }
+                
+                // .animation(.easeInOut(duration: 0.5), value: appCoordinator.isContentVisible) // REMOVE
                 .onAppear {
                     // Rule: Always add debug logs
                     print("📱 [App] Initial app appear, locale: \(locale.identifier)")
                     currentLocaleId = locale.identifier
-                    appCoordinator.startApp()
+                    // appCoordinator.startApp() // REMOVE
                 }
-                .onChange(of: locale) { 
+                .onChange(of: locale) {
                     // Rule: Always add debug logs
                     print("📱 [App] Locale changed from \(currentLocaleId ?? "unknown") to \(locale.identifier)")
                     // Check if the language part has actually changed
@@ -44,13 +44,14 @@ struct DigitalConfessionApp: App {
                     
                     if currentLocaleId != locale.identifier && (oldLanguage != newLanguage || oldLanguage == nil) {
                         // Force restart the view to apply new language
-                        print("📱 [App] Language changed, restarting UI")
-                        appCoordinator.isContentVisible = false
-                        // Small delay before showing content again
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                            appCoordinator.isContentVisible = true
-                            print("📱 [App] UI restarted with new language: \(locale.identifier)")
-                        }
+                        print("📱 [App] Language changed, restarting UI (Note: Full restart might require different approach now)")
+                        // REMOVE the logic involving appCoordinator.isContentVisible:
+                        // appCoordinator.isContentVisible = false
+                        // DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        //    appCoordinator.isContentVisible = true
+                        //    print("📱 [App] UI restarted with new language: \(locale.identifier)")
+                        // }
+                        // TODO: You might need a different mechanism to force a UI update on language change if needed.
                     } else {
                         print("📱 [App] Only region changed, not restarting UI")
                     }
@@ -76,6 +77,8 @@ struct DigitalConfessionApp: App {
 }
 
 // MARK: - App Coordinator
+// REMOVE OR COMMENT OUT THE ENTIRE AppCoordinator CLASS
+/*
 @MainActor
 class AppCoordinator: ObservableObject {
     @Published var isContentVisible = false
@@ -93,8 +96,11 @@ class AppCoordinator: ObservableObject {
         }
     }
 }
+*/
 
 // MARK: - Splash Screen
+// REMOVE OR COMMENT OUT THE ENTIRE SplashScreen STRUCT
+/*
 struct SplashScreen: View {
     var body: some View {
         ZStack {
@@ -121,3 +127,4 @@ struct SplashScreen: View {
         }
     }
 }
+*/

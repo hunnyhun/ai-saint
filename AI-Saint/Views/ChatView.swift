@@ -11,7 +11,7 @@ extension UIApplication {
 
 struct ChatView: View {
     // MARK: - Properties
-    let viewModel: ChatViewModel
+    @Bindable var viewModel: ChatViewModel // Use @Bindable for @Observable view models
     let userStatusManager = UserStatusManager.shared
     @State private var messageText = ""
     @FocusState private var isTextFieldFocused: Bool
@@ -21,7 +21,7 @@ struct ChatView: View {
     @State private var shouldScrollToBottom = false
     
     // Note: ChatViewModel should implement isRateLimited property
-    // that gets set to true when receiving a 429 rate limit error from backend
+    // that gets set to true when receiving a resource-exhausted error from backend
     
     // Debug helper
     private func debugLog(_ message: String) {
@@ -178,6 +178,8 @@ struct ChatView: View {
                     // Show premium button only when rate limit error occurs
                     if viewModel.isRateLimited {
                         premiumButton
+                            .padding(.vertical)
+                            .transition(.scale.animation(.spring()))
                     }
                     
                     // Bottom anchor view
@@ -213,7 +215,7 @@ struct ChatView: View {
     // MARK: - Input Area View
     private var inputArea: some View {
         VStack(spacing: 0) {
-            // Error message - show all errors except rate limit, which gets special treatment
+            // Error message - show general errors ONLY if NOT rate limited
             if let error = viewModel.error, !viewModel.isRateLimited {
                 Text(error)
                     .foregroundColor(.red)
@@ -240,7 +242,11 @@ struct ChatView: View {
     // MARK: - Input Text Field
     private var inputTextField: some View {
         ZStack(alignment: .trailing) {
-            TextField("confessThoughts".localized, text: $messageText, axis: .vertical)
+            TextField(
+                viewModel.isRateLimited ? "messageLimitReachedShort".localized : "confessThoughts".localized,
+                text: $messageText, 
+                axis: .vertical
+            )
                 .textFieldStyle(.plain)
                 .padding(.vertical, 10)
                 .padding(.horizontal, 16)
@@ -255,7 +261,7 @@ struct ChatView: View {
                 )
                 .lineLimit(1...5)
                 .focused($isTextFieldFocused)
-                .disabled(viewModel.isLoading)
+                .disabled(viewModel.isLoading || viewModel.isRateLimited)
                 .submitLabel(.send)
                 .onSubmit {
                     debugLog("Submit triggered, sending message")
@@ -278,9 +284,9 @@ struct ChatView: View {
             Button(action: sendMessage) {
                 Image(systemName: messageText.isEmpty ? "circle" : "arrow.up.circle.fill")
                     .font(.system(size: 24))
-                    .foregroundColor(messageText.isEmpty || viewModel.isLoading ? .gray.opacity(0.5) : .blue)
+                    .foregroundColor(messageText.isEmpty || viewModel.isLoading || viewModel.isRateLimited ? .gray.opacity(0.5) : .blue)
             }
-            .disabled(messageText.isEmpty || viewModel.isLoading)
+            .disabled(messageText.isEmpty || viewModel.isLoading || viewModel.isRateLimited)
             .padding(.trailing, 16)
             .scaleEffect(messageText.isEmpty ? 0.8 : 1.0)
             .animation(.spring(response: 0.3), value: messageText.isEmpty)
