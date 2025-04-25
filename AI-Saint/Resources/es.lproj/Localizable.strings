@@ -67,4 +67,42 @@
 "restorePurchases" = "Restaurar Compras";
 
 // MARK: - Accessibility
-"openSettings" = "Abre la configuración del sistema para cambiar el idioma de la aplicación"; 
+"openSettings" = "Abre la configuración del sistema para cambiar el idioma de la aplicación";
+
+/* Settings View */
+"account" = "Cuenta";
+"purchases" = "Compras";
+
+/* User Section */
+"anonymousUser" = "Usuario Anónimo";
+"premium" = "Premium";
+"freeAccount" = "Cuenta Gratuita";
+
+/* App Section */
+"notificationPreferences" = "Preferencias de Notificaciones";
+"language" = "Idioma";
+"openSettings" = "Abrir Configuración";
+
+/* Purchases Section */
+"restorePurchases" = "Restaurar Compras";
+"restoreSuccessMessage" = "Tus compras han sido restauradas exitosamente.";
+"restoreNoPurchasesFound" = "No se encontraron compras anteriores.";
+"restoreFailedMessage" = "Error al restaurar las compras. Por favor, inténtalo de nuevo.";
+
+/* Account Actions */
+"deleteAccount" = "Eliminar Cuenta";
+"signOut" = "Cerrar Sesión";
+
+/* Delete Account Alert */
+"deleteAccountTitle" = "Eliminar Cuenta";
+"deleteAccountConfirmMessage" = "¿Estás seguro de que deseas eliminar tu cuenta? Esta acción no se puede deshacer y todos tus datos se eliminarán permanentemente.";
+"deleteAccountFailedMessage" = "Error al eliminar la cuenta.";
+
+/* Buttons */
+"cancelButton" = "Cancelar";
+"deleteButton" = "Eliminar";
+"ok" = "Aceptar";
+
+/* Errors */
+"errorTitle" = "Error";
+"unknownError" = "Se produjo un error desconocido."; 

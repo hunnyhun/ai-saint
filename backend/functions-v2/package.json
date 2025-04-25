@@ -18,6 +18,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@google-cloud/tasks": "^6.0.1",
     "@google/generative-ai": "^0.2.0",
     "@types/node": "^22.14.0",
     "firebase-admin": "^11.11.0",

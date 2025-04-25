@@ -1,5 +1,5 @@
 import SwiftUI
-import RevenueCat
+import Foundation
 
 // MARK: - Background Components
 struct HolyBackground: View {
@@ -198,6 +198,14 @@ struct AuthenticationView: View {
                         .font(.custom("Avenir-Medium", size: 22))
                         .foregroundStyle(.white.opacity(0.9))
                         .padding(.top, 15)
+                    
+                    // Anonymous info message
+                    Text("Create an account for unlimited messages and to save your conversations.")
+                        .font(.custom("Avenir", size: 16))
+                        .foregroundStyle(.white.opacity(0.8))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 40)
+                        .padding(.top, 20)
                     
                     // Error Message
                     if let error = errorMessage {

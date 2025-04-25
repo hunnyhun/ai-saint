@@ -33,6 +33,9 @@ enum CloudFunctionError: Error {
     // Service instance
     private var functions: Functions
     
+    // MARK: - Singleton
+    static let shared = CloudFunctionService()
+    
     init() {
         // Debug log
         print("🌩️ CloudFunctionService initialized")
@@ -200,6 +203,73 @@ enum CloudFunctionError: Error {
             } else {
                 // Handle non-Firebase network errors
                 print("🌩️ Network error: \(error.localizedDescription)")
+                throw CloudFunctionError.networkError(error)
+            }
+        }
+    }
+
+    // MARK: - Delete Account
+    func deleteAccountAndData() async throws {
+        // Debug log
+        print("🌩️ Deleting account and data")
+        
+        do {
+            // Check authentication
+            guard let user = Auth.auth().currentUser else {
+                print("🌩️ No authenticated user found for deletion")
+                throw CloudFunctionError.notAuthenticated
+            }
+            
+            // Debug: Log user ID being deleted
+            print("🌩️ Requesting deletion for User ID: \(user.uid)")
+            
+            // Try to get a token for debugging (optional, but good practice)
+            let tokenResult = try await user.getIDTokenResult()
+            print("🌩️ User has valid token for deletion request: \(tokenResult.token.prefix(10))...")
+            
+            // Call the Cloud Function - ensure exact name match
+            // No parameters needed for this call
+            let result = try await functions.httpsCallable("deleteAccountAndData").call()
+            
+            // Parse response data - expecting { success: true }
+            guard let responseData = result.data as? [String: Any], responseData["success"] as? Bool == true else {
+                // Check if there's an error message in the response (though the function throws HttpsError on failure)
+                let message = (result.data as? [String: Any])?["message"] as? String ?? "Unknown error during deletion."
+                print("🌩️ Failed to confirm successful deletion from backend: \(result.data ?? "No data")")
+                throw CloudFunctionError.serverError(message)
+            }
+            
+            // Debug log on success from cloud function
+            print("🌩️ Successfully deleted account data via cloud function for user \(user.uid)")
+            
+        } catch let error as CloudFunctionError {
+            // Re-throw our custom errors
+            print("🌩️ Error deleting account: \(error.localizedDescription)")
+            throw error
+        } catch {
+            // Handle all other errors
+            print("🌩️ Function error detail during deletion: \(error)")
+            
+            let nsError = error as NSError
+            if nsError.domain == FunctionsErrorDomain { // Check if it's a Functions error
+                if let code = FunctionsErrorCode(rawValue: nsError.code) {
+                    switch code {
+                    case .unauthenticated:
+                        print("🌩️ Unauthenticated error from Functions during deletion")
+                        throw CloudFunctionError.notAuthenticated
+                    // Add other specific codes if needed (e.g., internal, unavailable)
+                    default:
+                        let message = (nsError.userInfo[FunctionsErrorDetailsKey] as? String) ?? nsError.localizedDescription
+                        print("🌩️ Firebase Functions server error during deletion: \(message)")
+                        throw CloudFunctionError.serverError(message)
+                    }
+                } else {
+                    print("🌩️ Unknown Firebase Functions error code during deletion: \(nsError.code)")
+                    throw CloudFunctionError.serverError(nsError.localizedDescription)
+                }
+            } else {
+                // Handle non-Firebase network errors
+                print("🌩️ Network error during deletion: \(error.localizedDescription)")
                 throw CloudFunctionError.networkError(error)
             }
         }

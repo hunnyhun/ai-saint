@@ -67,4 +67,42 @@
 "restorePurchases" = "Restore Purchases";
 
 // MARK: - Accessibility
-"openSettings" = "Opens system settings to change app language"; 
+"openSettings" = "Opens system settings to change app language";
+
+/* Settings View */
+"account" = "Account";
+"purchases" = "Purchases";
+
+/* User Section */
+"anonymousUser" = "Anonymous User";
+"premium" = "Premium";
+"freeAccount" = "Free Account";
+
+/* App Section */
+"notificationPreferences" = "Notification Preferences";
+"language" = "Language";
+"openSettings" = "Open Settings";
+
+/* Purchases Section */
+"restorePurchases" = "Restore Purchases";
+"restoreSuccessMessage" = "Your purchases have been successfully restored.";
+"restoreNoPurchasesFound" = "No previous purchases were found.";
+"restoreFailedMessage" = "Failed to restore purchases. Please try again.";
+
+/* Account Actions */
+"deleteAccount" = "Delete Account";
+"signOut" = "Sign Out";
+
+/* Delete Account Alert */
+"deleteAccountTitle" = "Delete Account";
+"deleteAccountConfirmMessage" = "Are you sure you want to delete your account? This action cannot be undone and all your data will be permanently deleted.";
+"deleteAccountFailedMessage" = "Failed to delete account.";
+
+/* Buttons */
+"cancelButton" = "Cancel";
+"deleteButton" = "Delete";
+"ok" = "OK";
+
+/* Errors */
+"errorTitle" = "Error";
+"unknownError" = "An unknown error occurred."; 

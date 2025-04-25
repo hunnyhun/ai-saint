@@ -67,4 +67,42 @@
 "restorePurchases" = "Restaurar Compras";
 
 // MARK: - Accessibility
-"openSettings" = "Abre as configurações do sistema para mudar o idioma do aplicativo"; 
+"openSettings" = "Abre as configurações do sistema para mudar o idioma do aplicativo";
+
+/* Settings View */
+"account" = "Conta";
+"purchases" = "Compras";
+
+/* User Section */
+"anonymousUser" = "Usuário Anônimo";
+"premium" = "Premium";
+"freeAccount" = "Conta Gratuita";
+
+/* App Section */
+"notificationPreferences" = "Preferências de Notificações";
+"language" = "Idioma";
+"openSettings" = "Abrir Configurações";
+
+/* Purchases Section */
+"restorePurchases" = "Restaurar Compras";
+"restoreSuccessMessage" = "Suas compras foram restauradas com sucesso.";
+"restoreNoPurchasesFound" = "Nenhuma compra anterior foi encontrada.";
+"restoreFailedMessage" = "Falha ao restaurar compras. Por favor, tente novamente.";
+
+/* Account Actions */
+"deleteAccount" = "Excluir Conta";
+"signOut" = "Sair";
+
+/* Delete Account Alert */
+"deleteAccountTitle" = "Excluir Conta";
+"deleteAccountConfirmMessage" = "Tem certeza de que deseja excluir sua conta? Esta ação não pode ser desfeita e todos os seus dados serão permanentemente excluídos.";
+"deleteAccountFailedMessage" = "Falha ao excluir a conta.";
+
+/* Buttons */
+"cancelButton" = "Cancelar";
+"deleteButton" = "Excluir";
+"ok" = "OK";
+
+/* Errors */
+"errorTitle" = "Erro";
+"unknownError" = "Ocorreu um erro desconhecido."; 

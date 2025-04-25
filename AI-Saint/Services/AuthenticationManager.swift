@@ -36,6 +36,23 @@ import os
     
     // MARK: - Sign In Methods
     
+    // Anonymous Sign In
+    func signInAnonymously() async throws {
+        isLoading = true
+        defer { isLoading = false }
+        
+        do {
+            print("DEBUG: Attempting anonymous sign in...")
+            let authResult = try await Auth.auth().signInAnonymously()
+            print("DEBUG: Successfully signed in anonymously. User: \(authResult.user.uid)")
+            self.user = authResult.user
+            self.isAuthenticated = true
+        } catch {
+            print("ERROR: Anonymous sign in error: \(error.localizedDescription)")
+            throw error
+        }
+    }
+    
     // Google Sign In
     func signInWithGoogle() async throws {
         isLoading = true

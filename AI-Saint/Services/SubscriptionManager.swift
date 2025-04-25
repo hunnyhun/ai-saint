@@ -22,10 +22,8 @@ import FirebaseAuth
     
     // MARK: - Setup
     private func setupRevenueCat() {
-        // Configure RevenueCat with your API key, linking to Firebase UID
         print("DEBUG: [SubscriptionManager] Setting up RevenueCat...")
         
-        // Get current Firebase User ID if available
         let firebaseUserID = Auth.auth().currentUser?.uid
         if let uid = firebaseUserID {
              print("DEBUG: [SubscriptionManager] Firebase User ID found: \(uid). Configuring RevenueCat with this App User ID.")
@@ -33,19 +31,17 @@ import FirebaseAuth
              print("DEBUG: [SubscriptionManager] No Firebase User ID found. Configuring RevenueCat anonymously.")
         }
         
-        // Use the Configuration Builder to set the App User ID
         let builder = Configuration.Builder(withAPIKey: "appl_WCSsEAgrWXsVeINtelhrPJJuklb")
         
         if let uid = firebaseUserID {
-            builder.with(appUserID: uid)
+            _ = builder.with(appUserID: uid)
         }
         
         Purchases.configure(with: builder.build())
         Purchases.shared.delegate = self
 
-        print("DEBUG: RevenueCat configured. Current App User ID: \(Purchases.shared.appUserID ?? "Anonymous")")
+        print("DEBUG: RevenueCat configured. Current App User ID: \(Purchases.shared.appUserID)")
 
-        // Get current subscription status
         Task {
             await refreshSubscriptionStatus()
         }
@@ -56,24 +52,20 @@ import FirebaseAuth
     /// Refresh the current subscription status
     @MainActor
     func refreshSubscriptionStatus() async {
-        // Add login/logout handling for App User ID
         let firebaseUserID = Auth.auth().currentUser?.uid
         let currentAppUserID = Purchases.shared.appUserID
 
-        // If Firebase user exists but RC App User ID doesn't match (or is anonymous)
         if let uid = firebaseUserID, uid != currentAppUserID {
-            print("DEBUG: [SubscriptionManager] Firebase UID (\(uid)) doesn't match RC App User ID (\(currentAppUserID ?? "nil")). Logging in to RevenueCat.")
+            print("DEBUG: [SubscriptionManager] Firebase UID (\(uid)) doesn't match RC App User ID (\(currentAppUserID)). Logging in to RevenueCat.")
             do {
                 let (customerInfo, created) = try await Purchases.shared.logIn(uid)
                 print("DEBUG: [SubscriptionManager] RevenueCat login successful. New customer: \(created). Customer Info: \(customerInfo)")
             } catch {
                 print("ERROR: [SubscriptionManager] RevenueCat login failed: \(error.localizedDescription)")
-                // Decide how to handle login failure - maybe proceed with anonymous ID or show error
             }
         } 
-        // If Firebase user is nil but RC App User ID exists
         else if firebaseUserID == nil, currentAppUserID != nil {
-            print("DEBUG: [SubscriptionManager] Firebase user logged out, but RC App User ID (\(currentAppUserID ?? "nil")) exists. Logging out from RevenueCat.")
+            print("DEBUG: [SubscriptionManager] Firebase user logged out, but RC App User ID (\(currentAppUserID)) exists. Logging out from RevenueCat.")
             do {
                 let customerInfo = try await Purchases.shared.logOut()
                 print("DEBUG: [SubscriptionManager] RevenueCat logout successful. Customer Info: \(customerInfo)")
@@ -82,14 +74,12 @@ import FirebaseAuth
             }
         }
 
-        // Proceed with fetching customer info after potential login/logout
         do {
-            print("DEBUG: [SubscriptionManager] Starting subscription refresh with App User ID: \(Purchases.shared.appUserID ?? "Anonymous")")
+            print("DEBUG: [SubscriptionManager] Starting subscription refresh with App User ID: \(Purchases.shared.appUserID)")
 
             let customerInfo = try await Purchases.shared.customerInfo()
             print("DEBUG: [SubscriptionManager] Got customer info - Entitlements: \(customerInfo.entitlements.all)")
             
-            // Check active subscriptions
             let isPremium = customerInfo.entitlements["Monthly Premium"]?.isActive == true
             currentSubscription = isPremium ? .premium : .free
             

@@ -70,7 +70,7 @@ struct SectionedChatHistory {
     // MARK: - Chat History Management
     func loadChatHistory() {
         // Throttle frequent calls
-        if let lastTime = lastLoadTime, 
+        if let lastTime = lastLoadTime,
            Date().timeIntervalSince(lastTime) < loadThrottleInterval {
             return
         }
@@ -111,7 +111,7 @@ struct SectionedChatHistory {
                                 timestamp = ts
                             } else if let ts = historyItem["timestamp"] as? Double {
                                 timestamp = ts
-                            } else if let lastUpdated = historyItem["lastUpdated"] as? [String: Any], 
+                            } else if let lastUpdated = historyItem["lastUpdated"] as? [String: Any],
                                   let seconds = lastUpdated["_seconds"] as? TimeInterval {
                                 timestamp = seconds
                             } else if let lastUpdated = historyItem["lastUpdated"] as? [String: Any],

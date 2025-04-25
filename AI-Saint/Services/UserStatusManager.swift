@@ -44,6 +44,7 @@ enum AppFeature {
 @Observable final class UserStatusManager: NSObject {
     // MARK: - Properties
     private let authManager = AuthenticationManager.shared
+    private let cloudFunctionService = CloudFunctionService.shared
     private let subscriptionManager = SubscriptionManager.shared
     private(set) var state = Models.UserState()
     private var authStateListener: AuthStateDidChangeListenerHandle?
@@ -187,6 +188,20 @@ enum AppFeature {
         // Debug log
         print("🔑 Signing out user")
         try authManager.signOut()
+    }
+    
+    func deleteAccount() async throws {
+        // Debug log
+        print("🔑 Deleting user account")
+        
+        
+        try await cloudFunctionService.deleteAccountAndData()
+        
+        // Then sign out using auth manager
+        try authManager.signOut()
+        
+        // Update local state
+        await updateUserState()
     }
 }
 

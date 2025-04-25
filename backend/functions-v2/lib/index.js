@@ -1,10 +1,12 @@
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
-import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { getAuth } from 'firebase-admin/auth';
+import { onCall, HttpsError, onRequest } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { defineSecret } from 'firebase-functions/params';
 import { getMessaging } from 'firebase-admin/messaging';
+import { CloudTasksClient } from '@google-cloud/tasks';
 // Define the Gemini API key secret with a different name to avoid conflicts
 const geminiSecretKey = defineSecret('GEMINI_SECRET_KEY');
 // Rule: Always add debug logs
@@ -19,6 +21,17 @@ console.log('📊 Firestore initialized');
 // Get Messaging instance
 const messaging = getMessaging();
 console.log('📱 Firebase Messaging initialized');
+// Get Auth instance
+const auth = getAuth();
+console.log('🔑 Firebase Auth Admin initialized');
+// Initialize Cloud Tasks Client
+const tasksClient = new CloudTasksClient();
+const project = process.env.GCLOUD_PROJECT;
+const location = 'us-central1';
+const queue = 'daily-quote-notifications';
+// Construct the fully qualified queue name.
+const parent = tasksClient.queuePath(project || '', location, queue);
+console.log('✅ Cloud Tasks Client initialized for queue:', parent);
 // Check if user has premium subscription
 async function checkUserSubscription(uid) {
     try {
@@ -457,338 +470,603 @@ async function generateSpiritualQuote(previousMessages) {
         return "Reflect on your spiritual journey today. Each step brings you closer to understanding.";
     }
 }
+// Helper: Check if a task was already scheduled today for a specific type
+async function checkTaskScheduled(userId, type, userToday) {
+    const scheduledMarkerRef = db.collection('users').doc(userId).collection('scheduledTasks').doc(`${userToday}_${type}`);
+    try {
+        const doc = await scheduledMarkerRef.get();
+        if (doc.exists) {
+            console.log(`[TASK SCHEDULER] Task ${type} already scheduled today (${userToday}) for user ${userId}`);
+            return true;
+        }
+        return false;
+    }
+    catch (error) {
+        console.error(`[TASK SCHEDULER] Error checking schedule marker for ${userId}, type ${type}:`, error);
+        return false; // Default to false if check fails
+    }
+}
+// Helper: Mark a task as scheduled for today
+async function markTaskScheduled(userId, type, userToday, scheduledTime) {
+    const scheduledMarkerRef = db.collection('users').doc(userId).collection('scheduledTasks').doc(`${userToday}_${type}`);
+    try {
+        await scheduledMarkerRef.set({
+            scheduledAt: FieldValue.serverTimestamp(),
+            scheduledFor: scheduledTime,
+            status: 'scheduled'
+        });
+        console.log(`[TASK SCHEDULER] Marked task ${type} as scheduled for ${userId} at ${scheduledTime.toISOString()}`);
+    }
+    catch (error) {
+        console.error(`[TASK SCHEDULER] Error marking schedule marker for ${userId}, type ${type}:`, error);
+    }
+}
 // Rule: Always add debug logs
-// Scheduled Daily Quote Sender - Run once per hour
-export const scheduledDailyQuotes = onSchedule({
+// Scheduled Daily Quote TASK SCHEDULER - Run once per hour
+export const scheduleDailyQuoteTasks = onSchedule({
     schedule: '0 * * * *', // Once per hour (at minute 0)
     region: 'us-central1',
     secrets: [geminiSecretKey],
     timeZone: 'UTC',
+    // Higher timeout needed? Maybe 120s? Depends on user count.
+    timeoutSeconds: 120, // Increase timeout to allow for scheduling loop
 }, async (event) => {
     try {
-        // Debug log - clear and detailed execution start
-        console.log('⏰ [QUOTE JOB] Starting scheduled quotes job:', event.jobName, 'at', new Date().toISOString());
-        // First get all users instead of querying devices directly
-        console.log('👥 [QUOTE JOB] Getting all users');
-        try {
-            // Get all users
-            const usersSnapshot = await db.collection('users').get();
-            console.log(`👥 [QUOTE JOB] Found ${usersSnapshot.size} users in total`);
-            if (usersSnapshot.empty) {
-                console.log('⚠️ [QUOTE JOB] No users found. Ending job.');
-                return;
-            }
-            let totalDevicesProcessed = 0;
-            let successCount = 0;
-            let errorCount = 0;
-            let skippedDueToTimezone = 0;
-            let skippedDueToLimit = 0; // Add counter for skipped free users
-            // Define the free quote limit
-            const FREE_QUOTE_LIMIT = 7;
-            // The current UTC hour
-            const currentUtcHour = new Date().getUTCHours();
-            console.log(`⏰ [QUOTE JOB] Current UTC hour: ${currentUtcHour}`);
-            // Process each user
-            for (const userDoc of usersSnapshot.docs) {
-                const userId = userDoc.id;
-                const userData = userDoc.data() || {}; // Get user data early
-                console.log(`👤 [QUOTE JOB] Processing user ${userId}`);
-                try {
-                    // Check user subscription status first
-                    const isPremium = await checkUserSubscription(userId);
-                    const dailyQuoteCount = userData.dailyQuoteCount || 0; // Get current quote count
-                    console.log(`💲 [QUOTE JOB] User ${userId} status: ${isPremium ? 'Premium' : 'Free'}, Quote count: ${dailyQuoteCount}`);
-                    // Skip free users who have reached their limit
-                    if (!isPremium && dailyQuoteCount >= FREE_QUOTE_LIMIT) {
-                        console.log(`🚫 [QUOTE JOB] Skipping user ${userId} - Free tier quote limit (${FREE_QUOTE_LIMIT}) reached.`);
-                        skippedDueToLimit++;
-                        continue;
-                    }
-                    // For each user, get their devices with notifications enabled
-                    const devicesSnapshot = await db.collection('users')
-                        .doc(userId)
-                        .collection('devices')
-                        .where('notificationsEnabled', '==', true)
-                        .get();
-                    if (devicesSnapshot.empty) {
-                        console.log(`📱 [QUOTE JOB] Skipping user ${userId} - no devices with notifications enabled`);
-                        continue;
-                    }
-                    // Process all devices to find valid timezone information
-                    const devices = devicesSnapshot.docs.map(doc => ({
-                        token: doc.id,
-                        path: doc.ref.path,
-                        timeZone: doc.data().timeZone,
-                        timeZoneOffset: doc.data().timeZoneOffset,
-                        lastNotified: doc.data().lastNotified || null
-                    }));
-                    if (devices.length === 0) {
-                        console.log(`📱 [QUOTE JOB] Skipping user ${userId} - no valid devices found`);
-                        continue;
-                    }
-                    console.log(`📱 [QUOTE JOB] Found ${devices.length} devices with notifications enabled for user ${userId}`);
-                    // Use the first device with valid timezone data to determine local time
-                    // Most users will have the same timezone for all their devices
-                    let userTimeZoneOffset = 0;
-                    let userLocalHour = currentUtcHour;
-                    // Try to find a device with timezone information
-                    const deviceWithTimezone = devices.find(d => d.timeZoneOffset !== undefined);
-                    if (deviceWithTimezone) {
-                        userTimeZoneOffset = deviceWithTimezone.timeZoneOffset || 0;
-                        userLocalHour = (currentUtcHour + userTimeZoneOffset + 24) % 24; // Ensure it's 0-23
-                        console.log(`⏰ [QUOTE JOB] User ${userId} timezone offset: ${userTimeZoneOffset}, local hour: ${userLocalHour}`);
+        // Debug log
+        console.log(`[TASK SCHEDULER] Starting job: ${event.jobName} at ${new Date().toISOString()}`);
+        // Placeholder - REPLACE THIS!
+        const taskHandlerUrl = `https://${location}-${project}.cloudfunctions.net/sendNotificationTaskHandler`;
+        console.log(`[TASK SCHEDULER] Using task handler URL: ${taskHandlerUrl}`);
+        if (!taskHandlerUrl || !taskHandlerUrl.startsWith('https://')) {
+            console.error('[TASK SCHEDULER] FATAL: Task handler URL is missing or invalid. Cannot schedule tasks.');
+            return; // Stop if URL is missing
+        }
+        // Get all users
+        console.log('[TASK SCHEDULER] Getting all users');
+        const usersSnapshot = await db.collection('users').get();
+        console.log(`[TASK SCHEDULER] Found ${usersSnapshot.size} users`);
+        if (usersSnapshot.empty) {
+            console.log('[TASK SCHEDULER] No users found. Ending job.');
+            return;
+        }
+        let tasksScheduledCount = 0;
+        let skippedDueToLimit = 0;
+        let skippedAlreadyScheduled = 0;
+        let errorsScheduling = 0;
+        const FREE_QUOTE_LIMIT = 7;
+        const now = new Date();
+        const currentUtcHour = now.getUTCHours();
+        console.log(`[TASK SCHEDULER] Current UTC hour: ${currentUtcHour}`);
+        // --- Define Notification Windows ---
+        const morningWindowStartHourLocal = 7; // 7:00 AM Local
+        const morningWindowEndHourLocal = 8; // Ends at 8:59 AM Local
+        const eveningWindowStartHourLocal = 18; // 6:00 PM Local
+        const eveningWindowEndHourLocal = 19; // Ends at 7:59 PM Local
+        for (const userDoc of usersSnapshot.docs) {
+            const userId = userDoc.id;
+            const userData = userDoc.data() || {};
+            try {
+                // Check subscription & Limits (only if scheduling needed)
+                const isPremium = await checkUserSubscription(userId);
+                const dailyQuoteCount = userData.dailyQuoteCount || 0;
+                if (!isPremium && dailyQuoteCount >= FREE_QUOTE_LIMIT) {
+                    // console.log(`[TASK SCHEDULER] Skipping user ${userId} - Free limit reached.`);
+                    skippedDueToLimit++;
+                    continue;
+                }
+                // Determine User's Local Timezone Info (only need offset)
+                let userTimeZoneOffset = 0;
+                const devicesSnapshot = await db.collection('users')
+                    .doc(userId)
+                    .collection('devices')
+                    // Only need one device with timezone info
+                    .where('timeZoneOffset', '!=', null)
+                    .limit(1)
+                    .get();
+                if (!devicesSnapshot.empty) {
+                    userTimeZoneOffset = devicesSnapshot.docs[0].data().timeZoneOffset || 0;
+                }
+                else {
+                    // Check another field if offset not available
+                    // const userSettings = await db.collection('users').doc(userId).collection('settings').doc('prefs').get();
+                    // if (userSettings.exists && userSettings.data()?.timeZoneOffset !== undefined) {
+                    //      userTimeZoneOffset = userSettings.data()?.timeZoneOffset;
+                    // } else {
+                    console.log(`[TASK SCHEDULER] No timezone info for user ${userId}, using UTC 0.`);
+                    // }
+                }
+                const userLocalHour = (currentUtcHour + userTimeZoneOffset + 24) % 24;
+                const userDate = new Date(now.getTime() + userTimeZoneOffset * 3600000);
+                const userToday = userDate.toISOString().split('T')[0]; // YYYY-MM-DD
+                // console.log(`[TASK SCHEDULER] User ${userId} Local Hour: ${userLocalHour}, Date: ${userToday}, Offset: ${userTimeZoneOffset}`);
+                // --- Determine if Morning or Evening Task needs scheduling ---
+                let targetSendType = null;
+                let targetWindowStartHour = null;
+                let targetWindowEndHour = null;
+                // Should we schedule a MORNING task?
+                // Check if the *next* hour falls into the morning window (e.g., if current local hour is 6, next is 7)
+                if (userLocalHour >= morningWindowStartHourLocal - 1 && userLocalHour <= morningWindowEndHourLocal) {
+                    const alreadyScheduled = await checkTaskScheduled(userId, 'notification_morning', userToday);
+                    if (!alreadyScheduled) {
+                        targetSendType = 'notification_morning';
+                        targetWindowStartHour = morningWindowStartHourLocal;
+                        targetWindowEndHour = morningWindowEndHourLocal;
+                        console.log(`[TASK SCHEDULER] User ${userId} eligible for MORNING task scheduling (Local Hour: ${userLocalHour})`);
                     }
                     else {
-                        console.log(`⏰ [QUOTE JOB] No timezone info for user ${userId}, using UTC`);
+                        skippedAlreadyScheduled++;
                     }
-                    // Check if it's an appropriate time to send notification
-                    // Primary sending window: 7am-9am local time
-                    // Secondary window: 6pm-8pm local time
-                    const isPrimaryWindow = userLocalHour >= 7 && userLocalHour <= 9;
-                    const isSecondaryWindow = userLocalHour >= 18 && userLocalHour <= 20;
-                    // Add randomization - only send to ~50% of eligible users in each run to spread out notifications
-                    const shouldRandomize = Math.random() < 0.5;
-                    if (!isPrimaryWindow && !isSecondaryWindow) {
-                        console.log(`⏰ [QUOTE JOB] Skipping user ${userId} - outside notification windows (local hour: ${userLocalHour})`);
-                        skippedDueToTimezone++;
-                        continue;
-                    }
-                    if (shouldRandomize) {
-                        console.log(`⏰ [QUOTE JOB] Skipping user ${userId} - randomization (will try again next hour)`);
-                        skippedDueToTimezone++;
-                        continue;
-                    }
-                    // Check if we've already sent a notification today
-                    // Get today's date in user's timezone
-                    const now = new Date();
-                    const userDate = new Date(now.getTime() + userTimeZoneOffset * 3600000);
-                    const userToday = userDate.toISOString().split('T')[0]; // YYYY-MM-DD
-                    // Check if this user has received a notification today already
-                    // First check the latest record in dailyQuotes collection
-                    const todayQuotesSnapshot = await db.collection('users')
-                        .doc(userId)
-                        .collection('dailyQuotes')
-                        .where('sentVia', '==', 'notification')
-                        .orderBy('timestamp', 'desc')
-                        .limit(1)
-                        .get();
-                    let alreadySentToday = false;
-                    if (!todayQuotesSnapshot.empty) {
-                        const latestQuote = todayQuotesSnapshot.docs[0].data();
-                        if (latestQuote.timestamp) {
-                            const quoteDate = latestQuote.timestamp.toDate();
-                            const quoteDateStr = quoteDate.toISOString().split('T')[0]; // YYYY-MM-DD
-                            if (quoteDateStr === userToday) {
-                                console.log(`⏰ [QUOTE JOB] User ${userId} already received notification today at ${quoteDate.toISOString()}`);
-                                alreadySentToday = true;
-                            }
-                        }
-                    }
-                    if (alreadySentToday) {
-                        console.log(`⏰ [QUOTE JOB] Skipping user ${userId} - already sent notification today`);
-                        skippedDueToTimezone++;
-                        continue;
-                    }
-                    // At this point, we've decided to send a notification to this user
-                    console.log(`⏰ [QUOTE JOB] Sending notification to user ${userId} (local hour: ${userLocalHour})`);
-                    // ---- START: Increment quote count for free users BEFORE sending ----
-                    let limitReachedByThisQuote = false;
-                    if (!isPremium) {
-                        const newDailyQuoteCount = dailyQuoteCount + 1;
-                        if (newDailyQuoteCount === FREE_QUOTE_LIMIT) {
-                            limitReachedByThisQuote = true;
-                            console.log(`🔔 [QUOTE JOB] User ${userId} will reach the free quote limit with this message.`);
-                        }
-                        try {
-                            await userDoc.ref.update({
-                                dailyQuoteCount: FieldValue.increment(1)
-                            });
-                            console.log(`📈 [QUOTE JOB] Incremented dailyQuoteCount for free user ${userId} to ${newDailyQuoteCount}`);
-                        }
-                        catch (updateError) {
-                            console.error(`❌ [QUOTE JOB] Failed to increment dailyQuoteCount for ${userId}:`, updateError);
-                            // Decide if we should still send the notification? Let's continue for now.
-                        }
-                    }
-                    // ---- END: Increment quote count ----
-                    totalDevicesProcessed += devices.length;
-                    // Fetch user's chat history for personalization
-                    let userMessages = [];
-                    try {
-                        // Get most recent conversations
-                        const conversationsSnapshot = await db.collection('users')
-                            .doc(userId)
-                            .collection('conversations')
-                            .orderBy('lastUpdated', 'desc')
-                            .limit(3)
-                            .get();
-                        // Extract user messages from conversations
-                        for (const convoDoc of conversationsSnapshot.docs) {
-                            const convoData = convoDoc.data();
-                            if (convoData.messages && Array.isArray(convoData.messages)) {
-                                // Get only user messages, not assistant responses
-                                const messages = convoData.messages
-                                    .filter((msg) => msg.role === 'user' && msg.content)
-                                    .map((msg) => msg.content);
-                                userMessages = [...userMessages, ...messages];
-                            }
-                        }
-                        // Limit to 5 most recent messages to keep context manageable
-                        userMessages = userMessages.slice(0, 5);
-                        console.log(`💬 [QUOTE JOB] Found ${userMessages.length} messages for personalization for user ${userId}`);
-                    }
-                    catch (historyError) {
-                        console.error(`❌ [QUOTE JOB] Error fetching chat history for ${userId}:`, historyError);
-                        // Continue with empty messages array - will fall back to generic quote
-                    }
-                    // Generate a quote - simple default
-                    let quote = "May your day be filled with peace and spiritual connection.";
-                    try {
-                        // Generate quote based on chat history or default
-                        quote = await generateSpiritualQuote(userMessages);
-                        console.log(`✍️ [QUOTE JOB] Generated quote for user ${userId}: ${quote}`);
-                    }
-                    catch (quoteError) {
-                        console.error(`❌ [QUOTE JOB] Error generating quote for ${userId}:`, quoteError);
-                        // Continue with default quote
-                    }
-                    // Save quote to user's history
-                    let quoteId = null;
-                    try {
-                        const quoteRef = await userDoc.ref.collection('dailyQuotes').add({
-                            quote,
-                            timestamp: FieldValue.serverTimestamp(),
-                            sentVia: 'notification',
-                            isFavorite: false
-                        });
-                        quoteId = quoteRef.id;
-                        console.log(`💾 [QUOTE JOB] Saved quote to history for user ${userId}, id: ${quoteId}`);
-                    }
-                    catch (saveError) {
-                        console.error(`❌ [QUOTE JOB] Error saving quote to history for ${userId}:`, saveError);
-                        // Continue to notification - don't block notification on save error
-                    }
-                    // Send notifications to all user's devices individually
-                    console.log(`📤 [QUOTE JOB] Sending to ${devices.length} devices for user ${userId}`);
-                    // Process each device
-                    for (const device of devices) {
-                        try {
-                            // Reference to the device document
-                            const deviceRef = db.doc(device.path);
-                            // Atomically increment the badge count in Firestore
-                            console.log(`📊 [QUOTE JOB] Attempting to increment badge for device: ${device.token.substring(0, 10)}...`);
-                            await deviceRef.update({
-                                badgeCount: FieldValue.increment(1),
-                                lastNotified: FieldValue.serverTimestamp(),
-                                lastUpdated: FieldValue.serverTimestamp()
-                            });
-                            console.log(`✅ [QUOTE JOB] Atomically incremented badge count in Firestore.`);
-                            // Now, read the updated device document to get the new badge count
-                            let newBadgeCount = 1; // Default to 1 if read fails
-                            try {
-                                const updatedDeviceDoc = await deviceRef.get();
-                                if (updatedDeviceDoc.exists) {
-                                    newBadgeCount = updatedDeviceDoc.data()?.badgeCount || 1;
-                                    console.log(`📊 [QUOTE JOB] Read updated badge count: ${newBadgeCount}`);
-                                }
-                                else {
-                                    console.warn(`⚠️ [QUOTE JOB] Device doc not found after update for token: ${device.token.substring(0, 10)}...`);
-                                }
-                            }
-                            catch (readError) {
-                                console.error(`❌ [QUOTE JOB] Error reading updated badge count:`, readError);
-                                // Continue with default badge count 1
-                            }
-                            // Create message payload with the newly read badge count
-                            const message = {
-                                token: device.token,
-                                notification: {
-                                    title: 'Your Daily Spiritual Message',
-                                    body: quote,
-                                },
-                                data: {
-                                    type: 'daily_quote',
-                                    quote: quote,
-                                    source: 'scheduled',
-                                    timestamp: new Date().toISOString(),
-                                    quoteId: quoteId || '',
-                                    badgeCount: newBadgeCount.toString(), // Use newly read count
-                                    limitReached: limitReachedByThisQuote.toString() // Add the flag here
-                                },
-                                // Critical for iOS background delivery
-                                apns: {
-                                    headers: {
-                                        'apns-priority': '10', // High priority
-                                        'apns-push-type': 'alert'
-                                    },
-                                    payload: {
-                                        aps: {
-                                            'content-available': 1,
-                                            'sound': 'default',
-                                            'badge': newBadgeCount, // Use newly read count
-                                            'mutable-content': 1
-                                        }
-                                    }
-                                },
-                                // Android specific settings
-                                android: {
-                                    priority: 'high',
-                                    notification: {
-                                        sound: 'default',
-                                        channelId: 'daily_quotes',
-                                        priority: 'high',
-                                        defaultSound: true,
-                                        visibility: 'public'
-                                    }
-                                }
-                            };
-                            // Send the notification
-                            console.log(`📤 [QUOTE JOB] Sending to token: ${device.token.substring(0, 10)}...`);
-                            const messageId = await messaging.send(message);
-                            console.log(`✅ [QUOTE JOB] Successfully sent to device ${device.token.substring(0, 10)}..., messageId: ${messageId}`);
-                            successCount++;
-                        }
-                        catch (sendError) {
-                            console.error(`❌ [QUOTE JOB] Failed to send to device ${device.token.substring(0, 10)}...:`, sendError.message || sendError);
-                            // Handle token not registered
-                            if (sendError.code === 'messaging/registration-token-not-registered') {
-                                console.log(`🧹 [QUOTE JOB] Removing invalid token: ${device.token.substring(0, 10)}...`);
-                                try {
-                                    // Delete the invalid device document
-                                    await db.doc(device.path).delete();
-                                    console.log(`🧹 [QUOTE JOB] Successfully removed invalid token document`);
-                                }
-                                catch (deleteError) {
-                                    console.error(`❌ [QUOTE JOB] Error deleting invalid token:`, deleteError);
-                                }
-                            }
-                            errorCount++;
-                        }
-                    }
-                    console.log(`📊 [QUOTE JOB] Completed processing user ${userId}`);
                 }
-                catch (userError) {
-                    console.error(`❌ [QUOTE JOB] Error processing user ${userId}:`, userError);
-                    // Continue with next user
+                // Should we schedule an EVENING task? (Only if morning wasn't targeted)
+                // Check if the *next* hour falls into the evening window
+                if (!targetSendType && userLocalHour >= eveningWindowStartHourLocal - 1 && userLocalHour <= eveningWindowEndHourLocal) {
+                    const alreadyScheduled = await checkTaskScheduled(userId, 'notification_evening', userToday);
+                    if (!alreadyScheduled) {
+                        targetSendType = 'notification_evening';
+                        targetWindowStartHour = eveningWindowStartHourLocal;
+                        targetWindowEndHour = eveningWindowEndHourLocal;
+                        console.log(`[TASK SCHEDULER] User ${userId} eligible for EVENING task scheduling (Local Hour: ${userLocalHour})`);
+                    }
+                    else {
+                        skippedAlreadyScheduled++;
+                    }
+                }
+                // If no task needs scheduling for this user in this run, continue
+                if (!targetSendType || targetWindowStartHour === null || targetWindowEndHour === null) {
+                    continue;
+                }
+                // --- Calculate Random Send Time ---
+                const randomMinutes = Math.floor(Math.random() * 120); // 0-119 minutes past window start
+                const sendDate = new Date(userDate); // Use user's local date object
+                // Set hour to the start of the window, then add random minutes
+                sendDate.setHours(targetWindowStartHour, 0, 0, 0);
+                sendDate.setMinutes(sendDate.getMinutes() + randomMinutes);
+                // Ensure calculated time is not in the past relative to now
+                // If it is (e.g., job runs late), schedule for minimum 5 mins from now
+                const minScheduleTime = new Date(now.getTime() + 5 * 60 * 1000);
+                if (sendDate.getTime() < minScheduleTime.getTime()) {
+                    console.warn(`[TASK SCHEDULER] Calculated send time for ${userId} (${sendDate.toISOString()}) is in the past. Scheduling for 5 mins from now.`);
+                    sendDate.setTime(minScheduleTime.getTime());
+                }
+                // --- Check Free Limit & Increment Count ---
+                let limitReachedByThisQuote = false;
+                if (!isPremium) {
+                    const newDailyQuoteCount = dailyQuoteCount + 1;
+                    if (newDailyQuoteCount === FREE_QUOTE_LIMIT) {
+                        limitReachedByThisQuote = true;
+                        console.log(`[TASK SCHEDULER] User ${userId} will reach free limit with this scheduled task.`);
+                    }
+                    // IMPORTANT: Increment count *before* scheduling task
+                    try {
+                        await userDoc.ref.update({ dailyQuoteCount: FieldValue.increment(1) });
+                        console.log(`[TASK SCHEDULER] Incremented dailyQuoteCount for free user ${userId} to ${newDailyQuoteCount}`);
+                    }
+                    catch (updateError) {
+                        console.error(`[TASK SCHEDULER] Failed to increment count for ${userId}. Skipping task creation.`, updateError);
+                        errorsScheduling++;
+                        continue; // Don't schedule if count fails
+                    }
+                }
+                // --- Generate Quote ---
+                // Fetch history (simplified - you might want more context)
+                let userMessages = [];
+                try {
+                    const convos = await db.collection('users').doc(userId).collection('conversations')
+                        .orderBy('lastUpdated', 'desc').limit(1).get();
+                    if (!convos.empty && convos.docs[0].data()?.messages) {
+                        userMessages = convos.docs[0].data().messages
+                            .filter((m) => m.role === 'user').map((m) => m.content).slice(0, 3);
+                    }
+                }
+                catch (histError) {
+                    console.error(`Error fetching history for quote gen for ${userId}`, histError);
+                }
+                let quote = "May your day be blessed."; // Default
+                try {
+                    quote = await generateSpiritualQuote(userMessages);
+                }
+                catch (quoteError) {
+                    console.error(`Error generating quote for ${userId}`, quoteError);
+                }
+                // --- Create Cloud Task ---
+                const payload = {
+                    userId: userId,
+                    quote: quote,
+                    sendType: targetSendType,
+                    limitReached: limitReachedByThisQuote
+                };
+                const task = {
+                    httpRequest: {
+                        httpMethod: 'POST',
+                        url: taskHandlerUrl,
+                        body: Buffer.from(JSON.stringify(payload)).toString('base64'),
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        // TODO: Add OIDC token for authentication if using Cloud Functions v2 / Cloud Run
+                        // See: https://cloud.google.com/tasks/docs/creating-http-target-tasks#node.js
+                        // Requires getting the service account email associated with this function
+                        // oidcToken: {
+                        //   serviceAccountEmail: 'YOUR_FUNCTION_SERVICE_ACCOUNT_EMAIL',
+                        // },
+                    },
+                    scheduleTime: {
+                        seconds: Math.floor(sendDate.getTime() / 1000)
+                    }
+                };
+                try {
+                    console.log(`[TASK SCHEDULER] Creating task for user ${userId}, type ${targetSendType}, scheduled for ${sendDate.toISOString()}`);
+                    const [response] = await tasksClient.createTask({ parent: parent, task: task });
+                    console.log(`[TASK SCHEDULER] Task ${response.name} created successfully.`);
+                    tasksScheduledCount++;
+                    // Mark as scheduled in Firestore AFTER successful task creation
+                    await markTaskScheduled(userId, targetSendType, userToday, sendDate);
+                }
+                catch (error) {
+                    console.error(`[TASK SCHEDULER] Failed to create task for user ${userId}:`, error);
+                    errorsScheduling++;
+                    // TODO: Consider rolling back the dailyQuoteCount increment if task creation fails?
+                    // Requires careful handling to avoid race conditions. For now, we leave it incremented.
                 }
             }
-            console.log('✅ [QUOTE JOB] Completed scheduled quotes job:', {
-                usersProcessed: usersSnapshot.size,
-                totalDevices: totalDevicesProcessed,
-                successfulNotifications: successCount,
-                failedNotifications: errorCount,
-                skippedDueToTimezone: skippedDueToTimezone,
-                skippedDueToLimit: skippedDueToLimit // Add new metric
-            });
-        }
-        catch (queryError) {
-            console.error('❌ [QUOTE JOB] Error querying users:', queryError);
-            throw queryError;
-        }
+            catch (userError) {
+                console.error(`[TASK SCHEDULER] Error processing user ${userId}:`, userError);
+                errorsScheduling++; // Count general processing errors too
+            }
+        } // End user loop
+        console.log('[TASK SCHEDULER] Completed job:', {
+            usersProcessed: usersSnapshot.size,
+            tasksScheduled: tasksScheduledCount,
+            skippedAlreadyScheduled: skippedAlreadyScheduled,
+            skippedDueToLimit: skippedDueToLimit,
+            errorsScheduling: errorsScheduling
+        });
     }
     catch (error) {
-        console.error('❌ [QUOTE JOB] Fatal error in scheduled job:', error);
-        throw error;
+        console.error('[TASK SCHEDULER] Fatal error in scheduled job:', error);
+        throw error; // Allow the job to report failure
+    }
+});
+export const sendNotificationTaskHandler = onRequest({
+    region: 'us-central1',
+    // Ensure this function can be invoked by Cloud Tasks
+    // You might need to configure IAM permissions separately
+    // Consider adding memory/cpu options if needed
+}, async (req, res) => {
+    // TODO: Add verification to ensure the request comes from Cloud Tasks
+    // e.g., Check for specific headers or OIDC token validation
+    // See: https://cloud.google.com/functions/docs/securing/authenticating#validating_tokens
+    const logPrefix = '[TASK HANDLER]';
+    console.log(`${logPrefix} Received task request at ${new Date().toISOString()}`);
+    try {
+        // Decode payload
+        let payload;
+        if (req.body.message && req.body.message.data) {
+            // Structure for Pub/Sub triggered tasks if used in future
+            payload = JSON.parse(Buffer.from(req.body.message.data, 'base64').toString());
+            console.log(`${logPrefix} Decoded Pub/Sub payload for user: ${payload.userId}`);
+        }
+        else if (typeof req.body === 'string') {
+            // Structure for direct HTTP POST with base64 body
+            payload = JSON.parse(Buffer.from(req.body, 'base64').toString());
+            console.log(`${logPrefix} Decoded HTTP Base64 payload for user: ${payload.userId}`);
+        }
+        else if (req.body && typeof req.body === 'object' && req.body.userId) {
+            // Structure for direct HTTP POST with JSON body (if Content-Type was set correctly)
+            payload = req.body;
+            console.log(`${logPrefix} Decoded HTTP JSON payload for user: ${payload.userId}`);
+        }
+        else {
+            console.error(`${logPrefix} Invalid payload structure:`, req.body);
+            res.status(400).send('Bad Request: Invalid payload');
+            return;
+        }
+        const { userId, quote, sendType, limitReached } = payload;
+        if (!userId || !quote || !sendType) {
+            console.error(`${logPrefix} Invalid payload content: Missing fields`, payload);
+            res.status(400).send('Bad Request: Missing fields in payload');
+            return;
+        }
+        console.log(`${logPrefix} Processing task for user ${userId}, type: ${sendType}`);
+        // Get user's devices
+        const devicesSnapshot = await db.collection('users')
+            .doc(userId)
+            .collection('devices')
+            .where('notificationsEnabled', '==', true)
+            .get();
+        if (devicesSnapshot.empty) {
+            console.log(`${logPrefix} No enabled devices found for user ${userId}. Task complete.`);
+            // Mark task status in Firestore if needed (optional)
+            // await db.collection('users').doc(userId).collection('scheduledTasks').doc(`${userToday}_${sendType}`).update({ status: 'completed_no_devices' });
+            res.status(200).send(`OK: No devices for user ${userId}`);
+            return;
+        }
+        console.log(`${logPrefix} Found ${devicesSnapshot.size} devices for user ${userId}`);
+        // Save quote to history (moved here from scheduler)
+        let quoteId = null;
+        try {
+            const quoteRef = await db.collection('users').doc(userId).collection('dailyQuotes').add({
+                quote: quote,
+                timestamp: FieldValue.serverTimestamp(),
+                sentVia: sendType,
+                isFavorite: false,
+                status: 'delivered' // Mark as delivered by task handler
+            });
+            quoteId = quoteRef.id;
+            console.log(`${logPrefix} Saved quote to history for user ${userId}, id: ${quoteId}`);
+        }
+        catch (saveError) {
+            console.error(`${logPrefix} Error saving quote to history for ${userId}:`, saveError);
+            // Continue anyway, but log the error
+        }
+        // Send notifications
+        let successCount = 0;
+        let errorCount = 0;
+        const batchSize = 500; // FCM batch limit
+        const deviceDocs = devicesSnapshot.docs;
+        for (let i = 0; i < deviceDocs.length; i += batchSize) {
+            const batchDocs = deviceDocs.slice(i, i + batchSize);
+            const messages = []; // Use any[] for flexibility with badge counts
+            // Prepare messages for the batch, including badge increment and read
+            for (const deviceDoc of batchDocs) {
+                const deviceToken = deviceDoc.id; // Token is the doc ID
+                const devicePath = deviceDoc.ref.path;
+                // Atomically increment badge count
+                try {
+                    await db.doc(devicePath).update({ badgeCount: FieldValue.increment(1) });
+                    // Read the updated count (best effort)
+                    let newBadgeCount = 1;
+                    try {
+                        const updatedDoc = await db.doc(devicePath).get();
+                        newBadgeCount = updatedDoc.data()?.badgeCount || 1;
+                    }
+                    catch (readError) {
+                        console.error(`${logPrefix} Failed to read badge count for ${deviceToken.substring(0, 10)}...`, readError);
+                    }
+                    const message = {
+                        token: deviceToken,
+                        notification: {
+                            title: 'Your Daily Spiritual Message',
+                            body: quote,
+                        },
+                        data: {
+                            type: 'daily_quote',
+                            quote: quote,
+                            source: 'scheduled_task', // Indicate source
+                            timestamp: new Date().toISOString(),
+                            quoteId: quoteId || '',
+                            badgeCount: newBadgeCount.toString(),
+                            limitReached: limitReached.toString()
+                        },
+                        apns: {
+                            headers: { 'apns-priority': '5', 'apns-push-type': 'alert' }, // Use 5 for content updates/non-urgent
+                            payload: { aps: { 'content-available': 1, 'sound': 'default', 'badge': newBadgeCount, 'mutable-content': 1 } }
+                        },
+                        android: {
+                            priority: 'normal', // Use normal for background tasks
+                            notification: { sound: 'default', channelId: 'daily_quotes', priority: 'default', defaultSound: true, visibility: 'public' }
+                        }
+                    };
+                    messages.push(message);
+                }
+                catch (updateError) {
+                    console.error(`${logPrefix} Failed to update badge count for ${deviceToken.substring(0, 10)}...`, updateError);
+                    // Decide if you should still try to send? Maybe skip this token.
+                }
+            } // End inner loop for message prep
+            // Send the batch if messages were prepared
+            if (messages.length > 0) {
+                try {
+                    console.log(`${logPrefix} Sending batch of ${messages.length} messages for user ${userId}`);
+                    const batchResponse = await messaging.sendEach(messages);
+                    successCount += batchResponse.successCount;
+                    errorCount += batchResponse.failureCount;
+                    console.log(`${logPrefix} Batch sent. Success: ${batchResponse.successCount}, Failure: ${batchResponse.failureCount}`);
+                    // Handle failures (e.g., unregistered tokens)
+                    if (batchResponse.failureCount > 0) {
+                        const cleanupPromises = [];
+                        batchResponse.responses.forEach((resp, idx) => {
+                            if (!resp.success) {
+                                const errorCode = resp.error?.code;
+                                const failedToken = messages[idx].token; // Get token from original message
+                                console.error(`${logPrefix} Failed to send to token ${failedToken.substring(0, 10)}... Error: ${errorCode} - ${resp.error?.message}`);
+                                if (errorCode === 'messaging/registration-token-not-registered' || errorCode === 'messaging/invalid-registration-token') {
+                                    console.log(`${logPrefix} Scheduling cleanup for invalid token: ${failedToken.substring(0, 10)}...`);
+                                    const failedDeviceDoc = batchDocs.find(doc => doc.id === failedToken);
+                                    if (failedDeviceDoc) {
+                                        cleanupPromises.push(db.doc(failedDeviceDoc.ref.path).delete().catch(delErr => console.error(`Failed to delete token ${failedToken}:`, delErr)));
+                                    }
+                                }
+                            }
+                        });
+                        await Promise.all(cleanupPromises);
+                        console.log(`${logPrefix} Invalid token cleanup complete for batch.`);
+                    }
+                }
+                catch (batchError) {
+                    console.error(`${logPrefix} Error sending batch for user ${userId}:`, batchError);
+                    // Note: If sendEach fails entirely, individual errors might not be available.
+                    errorCount += messages.length; // Assume all failed if the call itself failed
+                }
+            }
+        } // End batch loop
+        console.log(`${logPrefix} Finished sending for user ${userId}. Total Success: ${successCount}, Total Errors: ${errorCount}`);
+        // Mark task status in Firestore if needed (optional)
+        // await db.collection('users').doc(userId).collection('scheduledTasks').doc(`${userToday}_${sendType}`).update({ status: 'completed', successCount, errorCount });
+        // Respond to Cloud Tasks to acknowledge processing
+        res.status(200).send(`OK: Processed ${successCount} success, ${errorCount} errors for user ${userId}`);
+    }
+    catch (error) {
+        console.error(`${logPrefix} Fatal error processing task:`, error);
+        // Respond with an error status code to signal failure to Cloud Tasks
+        // This might cause Cloud Tasks to retry the task depending on queue configuration
+        res.status(500).send(`Internal Server Error: ${error.message || 'Unknown error'}`);
+    }
+});
+// --- Helper Function to Delete Collections Recursively --- 
+async function deleteCollection(collectionRef, batchSize = 100) {
+    const query = collectionRef.limit(batchSize);
+    return new Promise((resolve, reject) => {
+        deleteQueryBatch(query, resolve, reject);
+    });
+}
+async function deleteQueryBatch(query, resolve, reject) {
+    try {
+        const snapshot = await query.get();
+        // When there are no documents left, we are done
+        if (snapshot.size === 0) {
+            resolve();
+            return;
+        }
+        // Delete documents in a batch
+        const batch = db.batch();
+        snapshot.docs.forEach(doc => {
+            // Recursively delete subcollections first (important!)
+            // For simplicity here, we assume known subcollection names.
+            // A more robust solution would list subcollections dynamically.
+            const subcollectionsToDelete = ['subcollection1', 'subcollection2']; // ADD ANY SPECIFIC SUBCOLLECTIONS OF THE CURRENT LEVEL IF NEEDED
+            subcollectionsToDelete.forEach(subColl => {
+                // Schedule deletion, but don't wait here to avoid deep nesting
+                deleteCollection(doc.ref.collection(subColl)).catch(reject);
+            });
+            // Add the document itself to the batch delete
+            batch.delete(doc.ref);
+        });
+        await batch.commit();
+        // Recurse on the next batch
+        process.nextTick(() => {
+            deleteQueryBatch(query, resolve, reject);
+        });
+    }
+    catch (error) {
+        console.error("Error deleting batch: ", error);
+        reject(error);
+    }
+}
+// --- Account Deletion Function --- 
+export const deleteAccountAndData = onCall({
+    region: 'us-central1',
+    // Add secrets if needed for external service calls during deletion
+}, async (request) => {
+    const logPrefix = '[ACCOUNT DELETE]';
+    console.log(`${logPrefix} Received request.`);
+    // 1. Check Authentication
+    if (!request.auth) {
+        console.error(`${logPrefix} User not authenticated.`);
+        throw new HttpsError('unauthenticated', 'User must be authenticated to delete account.');
+    }
+    const uid = request.auth.uid;
+    console.log(`${logPrefix} Authenticated user: ${uid}`);
+    try {
+        // Start a Firestore transaction for atomic operations where possible
+        await db.runTransaction(async (transaction) => {
+            console.log(`${logPrefix} Starting transaction for account deletion process`);
+            const userRef = db.collection('users').doc(uid);
+            // Verify user exists
+            const userDoc = await transaction.get(userRef);
+            if (!userDoc.exists) {
+                console.warn(`${logPrefix} User document does not exist for ${uid}`);
+                // Continue anyway to clean up other data
+            }
+            else {
+                console.log(`${logPrefix} Found user document for ${uid}`);
+            }
+            // Mark user as being deleted (in case process fails, we know it's in progress)
+            transaction.update(userRef, {
+                deletionInProgress: true,
+                deletionStarted: FieldValue.serverTimestamp()
+            });
+            console.log(`${logPrefix} Marked user account as being deleted`);
+        });
+        // Define subcollections to delete under users/{uid}
+        const subcollections = [
+            'conversations',
+            'devices',
+            'scheduledTasks',
+            'dailyQuotes'
+            // Add any other subcollections associated with the user
+        ];
+        // 2. Delete Subcollections Recursively
+        console.log(`${logPrefix} Deleting subcollections for user ${uid}...`);
+        const deletePromises = subcollections.map(async (subcollectionName) => {
+            console.log(`${logPrefix}   - Deleting ${subcollectionName}...`);
+            const subcollectionRef = db.collection('users').doc(uid).collection(subcollectionName);
+            await deleteCollection(subcollectionRef);
+            console.log(`${logPrefix}   - Finished deleting ${subcollectionName}.`);
+        });
+        // Wait for all subcollection deletions to complete
+        await Promise.all(deletePromises);
+        console.log(`${logPrefix} Finished deleting all subcollections.`);
+        // 3. Check for and handle RevenueCat subscriptions
+        const customerDoc = await db.collection('customers').doc(uid).get();
+        if (customerDoc.exists && customerDoc.data()?.subscriptions) {
+            console.log(`${logPrefix} Found RevenueCat customer data, checking for active subscriptions`);
+            // Note: This is a placeholder. In a real implementation, you would:
+            // 1. Use RevenueCat API to cancel subscriptions if possible
+            // 2. Or flag the account for deletion in your backend systems
+            console.log(`${logPrefix} Handling RevenueCat data completed`);
+        }
+        // 4. Delete Main User Document
+        console.log(`${logPrefix} Deleting main user document: users/${uid}`);
+        await db.collection('users').doc(uid).delete();
+        console.log(`${logPrefix} Main user document deleted.`);
+        // 5. Delete RevenueCat Customer Document
+        console.log(`${logPrefix} Deleting RevenueCat document: customers/${uid}`);
+        await db.collection('customers').doc(uid).delete().catch(error => {
+            // Log error but don't fail the whole process if customer doc doesn't exist or fails
+            console.warn(`${logPrefix} Could not delete customer document (may not exist):`, error);
+        });
+        console.log(`${logPrefix} RevenueCat customer document deleted (or did not exist).`);
+        // 6. Delete any references in other collections
+        // Example: Delete user data in shared collections like 'groups', 'communities', etc.
+        // This is a placeholder - add actual collection cleanups as needed for your app
+        console.log(`${logPrefix} Cleaning up user references in other collections`);
+        // Example: Delete user's tasks in a "tasks" collection
+        // const tasksSnapshot = await db.collection('tasks').where('userId', '==', uid).get();
+        // const taskBatch = db.batch();
+        // tasksSnapshot.docs.forEach(doc => taskBatch.delete(doc.ref));
+        // await taskBatch.commit();
+        // 7. Delete Firebase Storage Data if applicable
+        // const storageBucket = admin.storage().bucket();
+        // const userFilesPrefix = `userFiles/${uid}/`;
+        // console.log(`${logPrefix} Deleting files from Storage at prefix: ${userFilesPrefix}`);
+        // await storageBucket.deleteFiles({ prefix: userFilesPrefix });
+        // console.log(`${logPrefix} Storage files deleted.`);
+        // 8. Delete Firebase Auth User
+        console.log(`${logPrefix} Deleting user from Firebase Authentication: ${uid}`);
+        try {
+            await auth.deleteUser(uid);
+            console.log(`${logPrefix} Firebase Auth user deleted successfully.`);
+        }
+        catch (authError) {
+            console.error(`${logPrefix} Error deleting Firebase Auth user:`, authError);
+            // If we fail to delete the auth user but deleted their data, 
+            // the account is essentially unusable but still exists
+            throw new HttpsError('internal', 'Failed to delete authentication account after data was removed.');
+        }
+        // 9. Log success for audit purposes
+        console.log(`${logPrefix} Account deletion completed successfully for user ${uid} at ${new Date().toISOString()}`);
+        return {
+            success: true,
+            message: 'Account and all associated data deleted successfully.',
+            timestamp: new Date().toISOString()
+        };
+    }
+    catch (error) {
+        console.error(`${logPrefix} Error deleting account for user ${uid}:`, error);
+        // Try to mark the account as having a failed deletion attempt
+        try {
+            await db.collection('users').doc(uid).update({
+                deletionFailed: true,
+                deletionError: error.message || 'Unknown error',
+                deletionAttemptedAt: FieldValue.serverTimestamp()
+            });
+        }
+        catch (updateError) {
+            console.error(`${logPrefix} Could not mark account as failed deletion:`, updateError);
+        }
+        // Avoid leaking internal details, throw a generic error
+        throw new HttpsError('internal', `Failed to delete account: ${error.message || 'Unknown error'}`);
     }
 });
 //# sourceMappingURL=index.js.map

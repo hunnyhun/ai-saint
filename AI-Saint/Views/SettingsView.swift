@@ -1,10 +1,20 @@
 import SwiftUI
 import UserNotifications
 import UIKit
+import RevenueCat
 
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Binding var showPaywall: Bool
+    
+    // Access the shared SubscriptionManager
+    @State private var subscriptionManager = SubscriptionManager.shared
+    @State private var showingRestoreAlert = false
+    @State private var restoreAlertMessage = ""
+    @State private var isRestoring = false
+    @State private var showingDeleteConfirm = false
+    @State private var isDeleting = false
+    @State private var deleteError: String?
     
     // Environment objects
     let userStatusManager = UserStatusManager.shared
@@ -40,6 +50,60 @@ struct SettingsView: View {
                     .accessibilityHint("openSettings".localized)
                 }
                 
+                // MARK: - Purchases Section
+                Section("purchases".localized) {
+                    Button {
+                        Task {
+                            isRestoring = true
+                            do {
+                                print("Attempting to restore purchases...")
+                                try await subscriptionManager.restorePurchases()
+                                if subscriptionManager.currentSubscription == .premium {
+                                    restoreAlertMessage = "restoreSuccessMessage".localized
+                                } else {
+                                    restoreAlertMessage = subscriptionManager.errorMessage ?? "restoreNoPurchasesFound".localized
+                                }
+                                print("Restore finished. Message: \(restoreAlertMessage)")
+                            } catch {
+                                print("ERROR: Restore failed in View: \(error.localizedDescription)")
+                                restoreAlertMessage = "restoreFailedMessage".localized
+                            }
+                            isRestoring = false
+                            showingRestoreAlert = true
+                        }
+                    } label: {
+                        HStack {
+                            if isRestoring {
+                                ProgressView()
+                                    .progressViewStyle(.circular)
+                                    .frame(width: 20, height: 20)
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                            }
+                            Text("restorePurchases".localized)
+                        }
+                    }
+                    .disabled(isRestoring)
+                }
+                
+                // MARK: - Delete Account Section
+                Section("account".localized) {
+                    Button(role: .destructive) {
+                        showingDeleteConfirm = true
+                    } label: {
+                        HStack {
+                            if isDeleting {
+                                ProgressView()
+                            } else {
+                                Image(systemName: "trash")
+                                Text("deleteAccount".localized)
+                            }
+                            Spacer()
+                        }
+                    }
+                    .disabled(isDeleting)
+                }
+                
                 // MARK: - Sign Out Section
                 Section {
                     Button(role: .destructive) {
@@ -53,7 +117,7 @@ struct SettingsView: View {
                         }
                     } label: {
                         HStack {
-                            Spacer()
+                            Image(systemName: "rectangle.portrait.and.arrow.right")
                             Text("signOut".localized)
                             Spacer()
                         }
@@ -62,13 +126,6 @@ struct SettingsView: View {
             }
             .navigationTitle("settings".localized)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("done".localized) {
-                        dismiss()
-                    }
-                }
-            }
             .onAppear {
                 // Check notification status when view appears
                 Task {
@@ -83,6 +140,37 @@ struct SettingsView: View {
                 }
             }
         }
+        .alert(isPresented: $showingRestoreAlert) {
+            Alert(title: Text("restorePurchases".localized), message: Text(restoreAlertMessage), dismissButton: .default(Text("ok".localized)))
+        }
+        .alert("deleteAccountTitle".localized, isPresented: $showingDeleteConfirm) {
+            Button("cancelButton".localized, role: .cancel) { }
+            Button("deleteButton".localized, role: .destructive) {
+                Task {
+                    isDeleting = true
+                    deleteError = nil
+                    do {
+                        print("📱 [SettingsView] Attempting account deletion...")
+                        try await userStatusManager.deleteAccount()
+                        print("✅ [SettingsView] Account deleted successfully.")
+                        dismiss()
+                    } catch {
+                        print("❌ [SettingsView] Account deletion failed: \(error.localizedDescription)")
+                        deleteError = "deleteAccountFailedMessage".localized + "\\n" + error.localizedDescription
+                    }
+                    isDeleting = false
+                }
+            }
+        } message: {
+            Text("deleteAccountConfirmMessage".localized)
+        }
+        .alert("errorTitle".localized, isPresented: .constant(deleteError != nil), actions: {
+            Button("ok".localized) {
+                deleteError = nil
+            }
+        }, message: {
+            Text(deleteError ?? "unknownError".localized)
+        })
     }
     
     // MARK: - User Section View

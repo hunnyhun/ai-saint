@@ -32,27 +32,22 @@ struct ContentView: View {
     // MARK: - Body
     var body: some View {
         Group {
-            if !userStatusManager.state.isAuthenticated {
-                AuthenticationView()
-                    .transition(.opacity)
-            } else {
-                mainContent
-                    .transition(.opacity)
-            }
+            mainContent
         }
         .animation(.easeInOut(duration: 0.3), value: userStatusManager.state.isAuthenticated)
+        .sheet(isPresented: $showAuthView) {
+            AuthenticationView()
+        }
         .task {
             // Check user status during initial load
             await userStatusManager.refreshUserState()
             
-            // Initialize app if user is authenticated
-            if userStatusManager.state.isAuthenticated {
-                chatViewModel.loadChatHistory()
-                
-                // Check notification permissions (but don't show prompt yet)
-                let permissionStatus = await notificationManager.checkNotificationStatus()
-                print("📱 [ContentView] Initial notification permission status: \(permissionStatus)")
-            }
+            // Initialize app when loaded
+            chatViewModel.loadChatHistory()
+            
+            // Check notification permissions (but don't show prompt yet)
+            let permissionStatus = await notificationManager.checkNotificationStatus()
+            print("📱 [ContentView] Initial notification permission status: \(permissionStatus)")
             
             // Add observer for quote notification taps
             setupNotificationObservers()
@@ -138,16 +133,6 @@ struct ContentView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .background(.ultraThinMaterial)
                 }
-            }
-            .sheet(isPresented: $showAuthView) {
-                AuthenticationView()
-                    .onDisappear {
-                        if userStatusManager.state.isAuthenticated {
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                                refreshSidebar()
-                            }
-                        }
-                    }
             }
             .sheet(isPresented: $showPaywall) {
                 PaywallView()
@@ -290,6 +275,71 @@ struct ContentView: View {
         // Directly call the centralized permission request method
         print("📱 [ContentView] Requesting notification permission")
         let _ = await notificationManager.requestNotificationPermission()
+    }
+    
+    // User profile at bottom of sidebar
+    private var userProfileView: some View {
+        VStack(spacing: 0) {
+            Divider()
+                .padding(.bottom, 12)
+            
+            HStack(spacing: 16) {
+                // User avatar
+                Circle()
+                    .fill(Color.gray.opacity(0.2))
+                    .frame(width: 45, height: 45)
+                    .overlay(
+                        Image(systemName: "person.fill")
+                            .foregroundColor(.gray)
+                    )
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    // If anonymous user, show "Anonymous" and sign in button
+                    if Auth.auth().currentUser?.isAnonymous == true {
+                        Text("anonymousUser".localized)
+                            .font(.subheadline)
+                            .foregroundColor(.gray)
+                        
+                        Button {
+                            showAuthView = true
+                        } label: {
+                            Text("signIn".localized)
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .foregroundColor(.blue)
+                        }
+                    } else {
+                        // For regular users, show email and subscription status
+                        if let email = userStatusManager.state.userEmail {
+                            Text(email)
+                                .font(.subheadline)
+                                .lineLimit(1)
+                        } else {
+                            Text("anonymousUser".localized)
+                                .font(.subheadline)
+                                .foregroundColor(.gray)
+                        }
+                        
+                        Text(userStatusManager.state.isPremium ? "premium".localized : "freeAccount".localized)
+                            .font(.caption)
+                            .foregroundColor(userStatusManager.state.isPremium ? .green : .gray)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                
+                // Settings button
+                Button {
+                    showSettingsSheet = true
+                } label: {
+                    Image(systemName: "gearshape.fill")
+                        .foregroundColor(.gray)
+                        .frame(width: 22, height: 22)
+                }
+            }
+            .padding(.horizontal)
+            .padding(.bottom, 16)
+        }
+        .background(Color(.secondarySystemBackground))
     }
 }
 

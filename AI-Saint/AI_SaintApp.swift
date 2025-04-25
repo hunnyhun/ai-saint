@@ -1,4 +1,6 @@
 import SwiftUI
+import AppTrackingTransparency // Import ATT
+import FirebaseAuth
 // Firebase is configured in AppDelegate
 
 // Main app entry point
@@ -11,6 +13,26 @@ struct DigitalConfessionApp: App {
     // Track language changes to restart app
     @Environment(\.locale) private var locale
     @State private var currentLocaleId: String?
+    @Environment(\.scenePhase) var scenePhase // ADDED: Observe scene phase
+    
+    // Auth manager for anonymous sign-in
+    private let authManager = AuthenticationManager.shared
+    
+    // MARK: - Helper Functions
+    private func signInAnonymouslyIfNeeded() async {
+        // Only sign in anonymously if there's no current user
+        if Auth.auth().currentUser == nil {
+            print("📱 [App] No authenticated user found, signing in anonymously")
+            do {
+                try await authManager.signInAnonymously()
+                print("📱 [App] Anonymous sign-in successful")
+            } catch {
+                print("📱 [App] Anonymous sign-in failed: \(error.localizedDescription)")
+            }
+        } else {
+            print("📱 [App] User already authenticated: \(Auth.auth().currentUser?.uid ?? "unknown")")
+        }
+    }
     
     // MARK: - Body
     var body: some Scene {
@@ -30,9 +52,16 @@ struct DigitalConfessionApp: App {
                 
                 // .animation(.easeInOut(duration: 0.5), value: appCoordinator.isContentVisible) // REMOVE
                 .onAppear {
+                    // requestTrackingPermission() // MOVED to onChange(of: scenePhase)
+                    
                     // Rule: Always add debug logs
                     print("📱 [App] Initial app appear, locale: \(locale.identifier)")
                     currentLocaleId = locale.identifier
+                    
+                    // Sign in anonymously if no user is authenticated
+                    Task {
+                        await signInAnonymouslyIfNeeded()
+                    }
                     // appCoordinator.startApp() // REMOVE
                 }
                 .onChange(of: locale) {
@@ -67,6 +96,44 @@ struct DigitalConfessionApp: App {
                 // Handle notification when app is launched via notification
                 print("📱 [App] Handling quote notification from app launch")
             }
+            // ADDED: Trigger ATT request when scene becomes active
+            .onChange(of: scenePhase) { _, newPhase in
+                if newPhase == .active {
+                    // When app becomes active, check if we need anonymous sign in
+                    Task {
+                        await signInAnonymouslyIfNeeded()
+                    }
+                }
+            }
+        }
+    }
+    
+    // Function to request ATT permission
+    private func requestTrackingPermission() {
+        // Check if running on iOS 14+ where ATT is available
+        if #available(iOS 14, *) {
+            // Request permission
+            ATTrackingManager.requestTrackingAuthorization { status in
+                // Handle the authorization status (optional)
+                // You might initialize tracking SDKs here only if status == .authorized
+                switch status {
+                case .authorized:
+                    print("✅ App Tracking Transparency permission authorized.")
+                    // Initialize tracking SDKs like Firebase Analytics here if needed
+                case .denied:
+                    print("❌ App Tracking Transparency permission denied.")
+                case .notDetermined:
+                    print("🤔 App Tracking Transparency permission not determined.")
+                case .restricted:
+                    print("🚫 App Tracking Transparency permission restricted.")
+                @unknown default:
+                    print("❓ Unknown App Tracking Transparency status.")
+                }
+            }
+        } else {
+            // Fallback for earlier iOS versions (if needed)
+            print("ℹ️ App Tracking Transparency not required on this iOS version.")
+            // Initialize tracking SDKs directly if applicable
         }
     }
     

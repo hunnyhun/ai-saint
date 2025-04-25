@@ -67,4 +67,42 @@
 "restorePurchases" = "Ripristina Acquisti";
 
 // MARK: - Accessibility
-"openSettings" = "Apre le impostazioni di sistema per cambiare la lingua dell'app"; 
+"openSettings" = "Apre le impostazioni di sistema per cambiare la lingua dell'app";
+
+/* Settings View */
+"account" = "Account";
+"purchases" = "Acquisti";
+
+/* User Section */
+"anonymousUser" = "Utente Anonimo";
+"premium" = "Premium";
+"freeAccount" = "Account Gratuito";
+
+/* App Section */
+"notificationPreferences" = "Preferenze Notifiche";
+"language" = "Lingua";
+"openSettings" = "Apri Impostazioni";
+
+/* Purchases Section */
+"restorePurchases" = "Ripristina Acquisti";
+"restoreSuccessMessage" = "I tuoi acquisti sono stati ripristinati con successo.";
+"restoreNoPurchasesFound" = "Nessun acquisto precedente trovato.";
+"restoreFailedMessage" = "Impossibile ripristinare gli acquisti. Riprova.";
+
+/* Account Actions */
+"deleteAccount" = "Elimina Account";
+"signOut" = "Disconnetti";
+
+/* Delete Account Alert */
+"deleteAccountTitle" = "Elimina Account";
+"deleteAccountConfirmMessage" = "Sei sicuro di voler eliminare il tuo account? Questa azione non può essere annullata e tutti i tuoi dati verranno eliminati permanentemente.";
+"deleteAccountFailedMessage" = "Impossibile eliminare l'account.";
+
+/* Buttons */
+"cancelButton" = "Annulla";
+"deleteButton" = "Elimina";
+"ok" = "OK";
+
+/* Errors */
+"errorTitle" = "Errore";
+"unknownError" = "Si è verificato un errore sconosciuto."; 

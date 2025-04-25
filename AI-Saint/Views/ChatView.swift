@@ -244,7 +244,7 @@ struct ChatView: View {
         ZStack(alignment: .trailing) {
             TextField(
                 viewModel.isRateLimited ? "messageLimitReachedShort".localized : "confessThoughts".localized,
-                text: $messageText, 
+                text: $messageText,
                 axis: .vertical
             )
                 .textFieldStyle(.plain)
@@ -399,7 +399,7 @@ struct ChatView: View {
             VStack(spacing: 12) {
                 ForEach([
                     "confessSuggestion1",
-                    "confessSuggestion2", 
+                    "confessSuggestion2",
                     "confessSuggestion3"
                 ], id: \.self) { suggestionKey in
                     Button(action: {
