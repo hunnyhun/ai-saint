@@ -31,6 +31,7 @@ public enum Models {
         public var userEmail: String?
         public var userId: String?
         public var lastUpdated: Date = Date()
+        public var isAnonymous: Bool = true // Default to true
         
         public var isAuthenticated: Bool {
             authStatus == .authenticated

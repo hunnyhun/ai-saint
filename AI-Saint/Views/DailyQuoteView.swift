@@ -147,7 +147,9 @@ struct DailyQuoteView: View {
     @State private var viewModel: DailyQuoteViewModel
     @State private var animateQuote = false
     @State private var showFromNotificationBadge = false
+    @State private var showAuthView = false
     @Environment(\.dismiss) private var dismiss
+    let userStatusManager = UserStatusManager.shared
     
     // MARK: - Initialization
     init(initialQuote: String? = nil, fromNotification: Bool = false) {
@@ -224,18 +226,45 @@ struct DailyQuoteView: View {
                                 .padding(.horizontal, 20)
                                 .padding(.top, 10)
                             
-                            if viewModel.isLoading {
+                            // Check if user is anonymous
+                            if userStatusManager.state.isAnonymous {
+                                // Anonymous User Prompt - Make tappable
+                                Button { 
+                                    showAuthView = true // Trigger auth sheet
+                                } label: {
+                                    VStack(spacing: 10) {
+                                        Image(systemName: "person.crop.circle.badge.questionmark.fill")
+                                            .font(.system(size: 40))
+                                            .foregroundColor(.yellow.opacity(0.7))
+                                        Text("signInToViewDailyQuotes".localized) // Updated text & key
+                                            .font(.headline)
+                                            .multilineTextAlignment(.center)
+                                        // Subtitle removed
+                                    }
+                                    .padding(.vertical, 30)
+                                    .padding(.horizontal, 30)
+                                    .frame(maxWidth: .infinity)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 16)
+                                            .fill(Color.yellow.opacity(0.05))
+                                    )
+                                }
+                                .buttonStyle(PlainButtonStyle()) // Use plain style to keep background
+                                .padding(.horizontal, 20) // Add padding to the prompt box
+                            } else if viewModel.isLoading {
+                                // Authenticated User - Loading State
                                 ProgressView()
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 30)
                             } else if viewModel.quotes.isEmpty {
+                                // Authenticated User - Empty State
                                 Text("noPreviousQuotes".localized)
                                     .font(.system(size: 16))
                                     .foregroundColor(.gray)
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 30)
                             } else {
-                                // List of Previous Quotes
+                                // Authenticated User - List of Previous Quotes
                                 VStack(spacing: 15) {
                                     // Skip the first quote if it's the current quote
                                     ForEach(viewModel.quotes) { quote in
@@ -298,6 +327,9 @@ struct DailyQuoteView: View {
                 // Clear badge count when viewing quotes
                 NotificationManager.shared.markNotificationsAsRead()
             }
+        }
+        .sheet(isPresented: $showAuthView) {
+            AuthenticationView()
         }
     }
     

@@ -1,6 +1,5 @@
 import SwiftUI
 import AppTrackingTransparency // Import ATT
-import FirebaseAuth
 // Firebase is configured in AppDelegate
 
 // Main app entry point
@@ -14,25 +13,6 @@ struct DigitalConfessionApp: App {
     @Environment(\.locale) private var locale
     @State private var currentLocaleId: String?
     @Environment(\.scenePhase) var scenePhase // ADDED: Observe scene phase
-    
-    // Auth manager for anonymous sign-in
-    private let authManager = AuthenticationManager.shared
-    
-    // MARK: - Helper Functions
-    private func signInAnonymouslyIfNeeded() async {
-        // Only sign in anonymously if there's no current user
-        if Auth.auth().currentUser == nil {
-            print("📱 [App] No authenticated user found, signing in anonymously")
-            do {
-                try await authManager.signInAnonymously()
-                print("📱 [App] Anonymous sign-in successful")
-            } catch {
-                print("📱 [App] Anonymous sign-in failed: \(error.localizedDescription)")
-            }
-        } else {
-            print("📱 [App] User already authenticated: \(Auth.auth().currentUser?.uid ?? "unknown")")
-        }
-    }
     
     // MARK: - Body
     var body: some Scene {
@@ -57,11 +37,6 @@ struct DigitalConfessionApp: App {
                     // Rule: Always add debug logs
                     print("📱 [App] Initial app appear, locale: \(locale.identifier)")
                     currentLocaleId = locale.identifier
-                    
-                    // Sign in anonymously if no user is authenticated
-                    Task {
-                        await signInAnonymouslyIfNeeded()
-                    }
                     // appCoordinator.startApp() // REMOVE
                 }
                 .onChange(of: locale) {
@@ -97,12 +72,10 @@ struct DigitalConfessionApp: App {
                 print("📱 [App] Handling quote notification from app launch")
             }
             // ADDED: Trigger ATT request when scene becomes active
-            .onChange(of: scenePhase) { _, newPhase in
+            .onChange(of: scenePhase) { oldPhase, newPhase in
                 if newPhase == .active {
-                    // When app becomes active, check if we need anonymous sign in
-                    Task {
-                        await signInAnonymouslyIfNeeded()
-                    }
+                    print("📱 [App] Scene became active, requesting tracking permission.")
+                    requestTrackingPermission()
                 }
             }
         }

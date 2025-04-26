@@ -32,6 +32,8 @@ const queue = 'daily-quote-notifications';
 // Construct the fully qualified queue name.
 const parent = tasksClient.queuePath(project || '', location, queue);
 console.log('✅ Cloud Tasks Client initialized for queue:', parent);
+// Define a limit specifically for anonymous users
+const ANONYMOUS_MESSAGE_LIMIT = 3; // Limit set to 3
 // Check if user has premium subscription
 async function checkUserSubscription(uid) {
     try {
@@ -127,6 +129,7 @@ async function checkMessageLimits(uid) {
 // Chat History Function
 export const getChatHistoryV2 = onCall({
     region: 'us-central1',
+    enforceAppCheck: true,
 }, async (request) => {
     try {
         // Debug log
@@ -239,6 +242,7 @@ Return only the title, nothing else.`;
 export const processChatMessageV2 = onCall({
     region: 'us-central1',
     secrets: [geminiSecretKey],
+    enforceAppCheck: true,
 }, async (request) => {
     try {
         // Debug log
@@ -254,12 +258,46 @@ export const processChatMessageV2 = onCall({
         }
         const { message, conversationId } = data;
         const uid = request.auth.uid;
-        // Debug log with authentication info
+        const signInProvider = request.auth.token.firebase?.sign_in_provider || 'unknown';
+        const isAnonymousUser = signInProvider === 'anonymous';
         console.log('👤 User authenticated:', {
             userId: uid,
-            provider: request.auth.token.firebase?.sign_in_provider || 'unknown',
+            provider: signInProvider,
+            isAnonymous: isAnonymousUser,
             email: request.auth.token.email || 'none'
         });
+        // --- Anonymous User Limit Check ---
+        if (isAnonymousUser) {
+            console.log('🕵️ User is anonymous. Checking message limits.');
+            const userRef = db.collection('users').doc(uid);
+            let anonymousMessageCount = 0;
+            try {
+                const userDoc = await userRef.get();
+                if (userDoc.exists) {
+                    anonymousMessageCount = userDoc.data()?.anonymousMessageCount || 0;
+                }
+                console.log(`🕵️ Anonymous message count: ${anonymousMessageCount}/${ANONYMOUS_MESSAGE_LIMIT}`);
+                // *** Check against the limit ***
+                if (anonymousMessageCount >= ANONYMOUS_MESSAGE_LIMIT) {
+                    console.log('🚫 Anonymous user has exceeded message limit.');
+                    throw new HttpsError('resource-exhausted', 'You have reached the message limit for anonymous access. Please sign in or sign up to continue chatting.');
+                }
+            }
+            catch (error) {
+                console.error('❌ Error fetching user data for anonymous limit check:', error);
+                // Decide if you want to block or allow if the check fails. Blocking is safer.
+                throw new HttpsError('internal', 'Could not verify usage limits.');
+            }
+        }
+        else {
+            console.log('✅ User is not anonymous. Skipping anonymous limit check.');
+            // Optional: You could still apply general free-tier limits here if needed
+            // const isPremium = await checkUserSubscription(uid);
+            // if (!isPremium) { /* check free tier limits */ }
+        }
+        // --- End Anonymous User Limit Check ---
+        // App Check has already been enforced if you reach this point
+        // The request.app object might contain token details if needed,
         // Check if user has premium subscription
         const isPremium = await checkUserSubscription(uid);
         console.log('💲 User subscription status:', isPremium ? 'Premium' : 'Free');
@@ -533,7 +571,7 @@ export const scheduleDailyQuoteTasks = onSchedule({
         let skippedDueToLimit = 0;
         let skippedAlreadyScheduled = 0;
         let errorsScheduling = 0;
-        const FREE_QUOTE_LIMIT = 7;
+        const FREE_QUOTE_LIMIT = 6;
         const now = new Date();
         const currentUtcHour = now.getUTCHours();
         console.log(`[TASK SCHEDULER] Current UTC hour: ${currentUtcHour}`);
@@ -946,6 +984,7 @@ async function deleteQueryBatch(query, resolve, reject) {
 // --- Account Deletion Function --- 
 export const deleteAccountAndData = onCall({
     region: 'us-central1',
+    enforceAppCheck: true,
     // Add secrets if needed for external service calls during deletion
 }, async (request) => {
     const logPrefix = '[ACCOUNT DELETE]';

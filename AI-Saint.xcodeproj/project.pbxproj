@@ -14,6 +14,7 @@
 		0039523F2D8CF22400603DC5 /* RevenueCatUI in Frameworks */ = {isa = PBXBuildFile; productRef = 0039523E2D8CF22400603DC5 /* RevenueCatUI */; };
 		003952412D8CF58500603DC5 /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = 003952402D8CF58500603DC5 /* FirebaseFirestore */; };
 		006F00CB2D93F8670011FB64 /* Launch Screen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 006F00CA2D93F8670011FB64 /* Launch Screen.storyboard */; };
+		007482562DBBB91200284AF3 /* FirebaseAppCheck in Frameworks */ = {isa = PBXBuildFile; productRef = 007482552DBBB91200284AF3 /* FirebaseAppCheck */; };
 		00A80B642D9196A900FE05B7 /* FirebaseFunctions in Frameworks */ = {isa = PBXBuildFile; productRef = 00A80B632D9196A900FE05B7 /* FirebaseFunctions */; };
 		00F6DB2C2D7F13AA00E279D1 /* RevenueCat in Frameworks */ = {isa = PBXBuildFile; productRef = 00F6DB2B2D7F13AA00E279D1 /* RevenueCat */; };
 		00F6DB2F2D7F164900E279D1 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 00F6DB2E2D7F164900E279D1 /* FirebaseAuth */; };
@@ -61,6 +62,7 @@
 				003952412D8CF58500603DC5 /* FirebaseFirestore in Frameworks */,
 				00F6DB312D7F164900E279D1 /* FirebaseCore in Frameworks */,
 				00F6DB2F2D7F164900E279D1 /* FirebaseAuth in Frameworks */,
+				007482562DBBB91200284AF3 /* FirebaseAppCheck in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -114,6 +116,7 @@
 				003952402D8CF58500603DC5 /* FirebaseFirestore */,
 				00A80B632D9196A900FE05B7 /* FirebaseFunctions */,
 				000545622D9591300090FC78 /* FirebaseMessaging */,
+				007482552DBBB91200284AF3 /* FirebaseAppCheck */,
 			);
 			productName = "AI-Saint";
 			productReference = 00961D042D750187008285B5 /* AI-Saint.app */;
@@ -456,6 +459,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 00F6DB2D2D7F164900E279D1 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseFirestore;
+		};
+		007482552DBBB91200284AF3 /* FirebaseAppCheck */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 00F6DB2D2D7F164900E279D1 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAppCheck;
 		};
 		00A80B632D9196A900FE05B7 /* FirebaseFunctions */ = {
 			isa = XCSwiftPackageProductDependency;

@@ -5,6 +5,7 @@ import FirebaseFirestore
 import FirebaseMessaging
 import GoogleSignIn
 import UserNotifications
+import FirebaseAppCheck
 
 class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate, MessagingDelegate {
     // Rule: Always add debug logs
@@ -34,6 +35,35 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         
         // Always reset badge count on app launch
         print("📱 [AppDelegate] App launching, resetting badge count")
+        
+        // --- App Check Configuration ---
+        #if targetEnvironment(simulator)
+          // Use App Check debug provider on simulators.
+          let providerFactory = AppCheckDebugProviderFactory()
+          print("🔒 [AppCheck] Using Debug Provider Factory for Simulator")
+        #else
+          // Use App Attest provider on real devices.
+          // IMPORTANT: Requires App Attest capability added to your app in Xcode
+          // AND setup in your Apple Developer account & Firebase Console.
+          let providerFactory = DeviceCheckProviderFactory()
+          print("🔒 [AppCheck] Using DeviceCheck Provider Factory for Device (will use App Attest if available)")
+        #endif
+        AppCheck.setAppCheckProviderFactory(providerFactory)
+        // --- End App Check Configuration ---
+        
+        AppCheck.appCheck().token(forcingRefresh: false) { token, error in
+            if let error = error {
+                print("🔒❌ [AppCheck] Error fetching initial token: \(error.localizedDescription)")
+                // You might want to handle this, maybe retry later or disable features
+                return
+            }
+            if let token = token {
+                print("🔒✅ [AppCheck] Successfully fetched initial token: \(token.token.prefix(10))...")
+            } else {
+                print("🔒⚠️ [AppCheck] Fetched nil token without error.")
+            }
+        }
+        
         UNUserNotificationCenter.current().setBadgeCount(0) { error in
             if let error = error {
                 print("❌ [AppDelegate] Error resetting badge count on launch: \(error.localizedDescription)")

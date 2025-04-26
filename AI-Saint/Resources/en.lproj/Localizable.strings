@@ -67,7 +67,7 @@
 "restorePurchases" = "Restore Purchases";
 
 // MARK: - Accessibility
-"openSettings" = "Opens system settings to change app language";
+"openSettings" = "Opens system settings to change app language"; 
 
 /* Settings View */
 "account" = "Account";
@@ -106,3 +106,21 @@
 /* Errors */
 "errorTitle" = "Error";
 "unknownError" = "An unknown error occurred."; 
+
+/* Sidebar Anonymous Prompt */
+"signUpOrLogIn" = "Sign up or log in";
+"signUpBenefitText" = "Save your chat, personalize experience and daily quotes.";
+
+/* Daily Quote Anonymous Prompt */
+"signInToViewDailyQuotes" = "Sign in to view Daily Quotes"; 
+
+/* Sidebar Anonymous History Prompt */
+"signInToViewHistory" = "Sign in to view chat history.";
+
+/* Authentication View */
+"authSubtitle" = "Begin your digital confession";
+"continueWithGoogle" = "Continue with Google";
+"continueWithApple" = "Continue with Apple";
+
+/* Anonymous Settings Button */
+"settingsButtonLabel" = "Settings"; 

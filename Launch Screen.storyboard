@@ -22,8 +22,24 @@
                                 <color key="textColor" red="0.0" green="0.0" blue="0.0" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
                                 <nil key="highlightedColor"/>
                             </label>
-                            <label opaque="NO" clipsSubviews="YES" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" misplaced="YES" text="AI-Saint" textAlignment="center" lineBreakMode="middleTruncation" baselineAdjustment="alignBaselines" minimumFontSize="18" translatesAutoresizingMaskIntoConstraints="NO" id="GJd-Yh-RWb">
-                                <rect key="frame" x="16" y="570" width="393" height="58"/>
+                            <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="Mxg-Y6-CaU" userLabel="Cross Vertical">
+                                <rect key="frame" x="181.66666666666666" y="252" width="30" height="240"/>
+                                <color key="backgroundColor" systemColor="systemYellowColor"/>
+                                <constraints>
+                                    <constraint firstAttribute="height" constant="240" id="hUh-5u-wlz"/>
+                                    <constraint firstAttribute="width" constant="30" id="uap-vl-Swh"/>
+                                </constraints>
+                            </view>
+                            <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="fbh-Od-pL2" userLabel="Cross Horizontal">
+                                <rect key="frame" x="121.66666666666669" y="300" width="150" height="30"/>
+                                <color key="backgroundColor" systemColor="systemYellowColor"/>
+                                <constraints>
+                                    <constraint firstAttribute="height" constant="30" id="30t-iE-FI9"/>
+                                    <constraint firstAttribute="width" constant="150" id="m4t-Hb-Fdj"/>
+                                </constraints>
+                            </view>
+                            <label opaque="NO" clipsSubviews="YES" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" text="AI-Saint" textAlignment="center" lineBreakMode="middleTruncation" baselineAdjustment="alignBaselines" minimumFontSize="18" translatesAutoresizingMaskIntoConstraints="NO" id="GJd-Yh-RWb">
+                                <rect key="frame" x="97" y="522" width="199" height="58"/>
                                 <fontDescription key="fontDescription" type="boldSystem" pointSize="48"/>
                                 <color key="textColor" systemColor="systemYellowColor"/>
                                 <nil key="highlightedColor"/>
@@ -36,8 +52,11 @@
                             <constraint firstItem="Bcu-3y-fUS" firstAttribute="centerX" secondItem="GJd-Yh-RWb" secondAttribute="centerX" id="Q3B-4B-g5h"/>
                             <constraint firstItem="obG-Y5-kRd" firstAttribute="leading" secondItem="Bcu-3y-fUS" secondAttribute="leading" symbolic="YES" id="SfN-ll-jLj"/>
                             <constraint firstAttribute="bottom" secondItem="obG-Y5-kRd" secondAttribute="bottom" constant="20" id="Y44-ml-fuU"/>
-                            <constraint firstItem="GJd-Yh-RWb" firstAttribute="centerY" secondItem="Ze5-6b-2t3" secondAttribute="bottom" multiplier="1/3" constant="1" id="moa-c2-u7t"/>
-                            <constraint firstItem="GJd-Yh-RWb" firstAttribute="leading" secondItem="Bcu-3y-fUS" secondAttribute="leading" symbolic="YES" id="x7j-FC-K8j"/>
+                            <constraint firstItem="Mxg-Y6-CaU" firstAttribute="centerX" secondItem="Ze5-6b-2t3" secondAttribute="centerX" id="Y97-gK-FTn"/>
+                            <constraint firstItem="fbh-Od-pL2" firstAttribute="top" secondItem="Mxg-Y6-CaU" secondAttribute="top" constant="48" id="Z0v-fb-A01"/>
+                            <constraint firstItem="fbh-Od-pL2" firstAttribute="centerX" secondItem="Ze5-6b-2t3" secondAttribute="centerX" id="dXb-RX-Tbg"/>
+                            <constraint firstItem="GJd-Yh-RWb" firstAttribute="top" secondItem="Mxg-Y6-CaU" secondAttribute="bottom" constant="30" id="kwG-fE-d0z"/>
+                            <constraint firstItem="GJd-Yh-RWb" firstAttribute="centerY" secondItem="Ze5-6b-2t3" secondAttribute="centerY" constant="125" id="moa-c2-u7t"/>
                         </constraints>
                     </view>
                 </viewController>

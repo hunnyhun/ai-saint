@@ -279,22 +279,36 @@ struct SectionedChatHistory {
     }
     
     @objc private func handleUserStateChange(_ notification: Notification) {
-        guard let authStatus = notification.userInfo?["authStatus"] as? String,
-              let isPremium = notification.userInfo?["isPremium"] as? Bool,
-              let timestamp = notification.userInfo?["timestamp"] as? Date,
-              let userId = notification.userInfo?["userId"] as? String?,
-              let userEmail = notification.userInfo?["userEmail"] as? String? else {
+        guard let userInfo = notification.userInfo else {
             print("ERROR: [Chat] Invalid user state change notification data")
             return
         }
         
-        // Load chat history for all authenticated users (not just premium)
-        if authStatus == "authenticated" {
+        // Check authentication status
+        if let authStatus = userInfo["authStatus"] as? String,
+           let isAnonymous = userInfo["isAnonymous"] as? Bool { // Get anonymous status
+            
+            print("[Chat] Handling user state change: Auth=\(authStatus), Anonymous=\(isAnonymous)")
+            
+            if authStatus == "authenticated" && !isAnonymous {
+                // User is fully authenticated (not anonymous), load history
+                print("[Chat] User is fully authenticated. Loading history.")
             loadChatHistory()
+            } else if authStatus == "authenticated" && isAnonymous {
+                // User is anonymous, clear history and don't load
+                print("[Chat] User is anonymous. Clearing local history.")
+                self.chatHistory = []
+                self.sectionedHistory = [] // Clear sectioned history too
+                self.isLoadingHistory = false // Ensure loading indicator stops
+            } else {
+                // User is unauthenticated, clear history
+                print("[Chat] User is unauthenticated. Clearing local history.")
+                self.chatHistory = []
+                self.sectionedHistory = [] // Clear sectioned history too
+                self.isLoadingHistory = false // Ensure loading indicator stops
+            }
         } else {
-            // Clear data
-            messages = []
-            chatHistory = []
+            print("ERROR: [Chat] Invalid user state change notification data")
         }
     }
     

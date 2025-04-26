@@ -67,7 +67,7 @@
 "restorePurchases" = "Restaurar Compras";
 
 // MARK: - Accessibility
-"openSettings" = "Abre as definições do sistema para alterar o idioma da aplicação";
+"openSettings" = "Abre as definições do sistema para alterar o idioma da aplicação"; 
 
 /* Settings View */
 "account" = "Conta";
@@ -105,4 +105,22 @@
 
 /* Errors */
 "errorTitle" = "Erro";
-"unknownError" = "Ocorreu um erro desconhecido."; 
+"unknownError" = "Ocorreu um erro desconhecido.";
+
+/* Sidebar Anonymous Prompt */
+"signUpOrLogIn" = "Registe-se ou inicie sessão";
+"signUpBenefitText" = "Guarde a sua conversa, personalize a experiência e as citações diárias.";
+
+/* Daily Quote Anonymous Prompt */
+"signInToViewDailyQuotes" = "Inicie sessão para ver as Citações Diárias";
+
+/* Sidebar Anonymous History Prompt */
+"signInToViewHistory" = "Inicie sessão para ver o histórico de conversas.";
+
+/* Authentication View */
+"authSubtitle" = "Comece a sua confissão digital";
+"continueWithGoogle" = "Continuar com Google";
+"continueWithApple" = "Continuar com Apple";
+
+/* Anonymous Settings Button */
+"settingsButtonLabel" = "Configurações"; 

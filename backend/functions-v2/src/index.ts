@@ -53,6 +53,9 @@ interface ConversationData {
   title?: string;
 }
 
+// Define a limit specifically for anonymous users
+const ANONYMOUS_MESSAGE_LIMIT = 2; // Limit set to 3
+
 // Check if user has premium subscription
 async function checkUserSubscription(uid: string): Promise<boolean> {
     try {
@@ -158,18 +161,28 @@ async function checkMessageLimits(uid: string): Promise<boolean> {
 // Chat History Function
 export const getChatHistoryV2 = onCall({
   region: 'us-central1',
+  enforceAppCheck: true,
 }, async (request) => {
     try {
-        // Debug log
         console.log('📱 Fetching chat history...');
         
-        // Check authentication
         if (!request.auth) {
-            throw new Error('User must be authenticated');
+             console.error('❌ Chat history requested without authentication.');
+            throw new HttpsError('unauthenticated', 'User must be authenticated.');
         }
+
+        // --- Anonymous User Check ---
+        const isAnonymous = request.auth.token.firebase?.sign_in_provider === 'anonymous';
+        if (isAnonymous) {
+            console.log('🚫 Anonymous user attempted to fetch chat history. Denying access.');
+            // Return empty array or throw an error - returning empty is often better UI
+             // throw new HttpsError('permission-denied', 'Sign in to view chat history.');
+             return []; // Return empty history for anonymous users
+        }
+        // --- End Anonymous User Check ---
         
         const uid = request.auth.uid;
-        console.log('👤 User authenticated:', { userId: uid, token: request.auth.token });
+        console.log('👤 Authenticated user requesting history:', { userId: uid });
         
         try {
             console.log('🔍 Attempting to query Firestore users collection for user:', uid);
@@ -285,6 +298,7 @@ Return only the title, nothing else.`;
 export const processChatMessageV2 = onCall({
     region: 'us-central1',
     secrets: [geminiSecretKey],
+    enforceAppCheck: true,
 }, async (request) => {
     try {
         // Debug log
@@ -305,12 +319,48 @@ export const processChatMessageV2 = onCall({
         const { message, conversationId } = data;
         const uid = request.auth.uid;
         
-        // Debug log with authentication info
+        const signInProvider = request.auth.token.firebase?.sign_in_provider || 'unknown';
+        const isAnonymousUser = signInProvider === 'anonymous';
+
         console.log('👤 User authenticated:', { 
             userId: uid,
-            provider: request.auth.token.firebase?.sign_in_provider || 'unknown',
+            provider: signInProvider,
+            isAnonymous: isAnonymousUser,
             email: request.auth.token.email || 'none'
         });
+
+        // --- Anonymous User Limit Check ---
+        if (isAnonymousUser) {
+            console.log('🕵️ User is anonymous. Checking message limits.');
+            const userRef = db.collection('users').doc(uid);
+            let anonymousMessageCount = 0;
+            try {
+                const userDoc = await userRef.get();
+                if (userDoc.exists) {
+                    anonymousMessageCount = userDoc.data()?.anonymousMessageCount || 0;
+                }
+                console.log(`🕵️ Anonymous message count: ${anonymousMessageCount}/${ANONYMOUS_MESSAGE_LIMIT}`);
+
+                // *** Check against the limit ***
+                if (anonymousMessageCount >= ANONYMOUS_MESSAGE_LIMIT) {
+                    console.log('🚫 Anonymous user has exceeded message limit.');
+                    throw new HttpsError('resource-exhausted', 'You have reached the message limit for anonymous access. Please sign in or sign up to continue chatting.');
+                }
+            } catch (error) {
+                console.error('❌ Error fetching user data for anonymous limit check:', error);
+                // Decide if you want to block or allow if the check fails. Blocking is safer.
+                throw new HttpsError('internal', 'Could not verify usage limits.');
+            }
+        } else {
+            console.log('✅ User is not anonymous. Skipping anonymous limit check.');
+            // Optional: You could still apply general free-tier limits here if needed
+            // const isPremium = await checkUserSubscription(uid);
+            // if (!isPremium) { /* check free tier limits */ }
+        }
+        // --- End Anonymous User Limit Check ---
+
+        // App Check has already been enforced if you reach this point
+        // The request.app object might contain token details if needed,
         
         // Check if user has premium subscription
         const isPremium = await checkUserSubscription(uid);
@@ -613,7 +663,7 @@ export const scheduleDailyQuoteTasks = onSchedule({
         let skippedAlreadyScheduled = 0;
         let errorsScheduling = 0;
 
-        const FREE_QUOTE_LIMIT = 7;
+        const FREE_QUOTE_LIMIT = 6;
         const now = new Date();
         const currentUtcHour = now.getUTCHours();
         console.log(`[TASK SCHEDULER] Current UTC hour: ${currentUtcHour}`);
@@ -1077,6 +1127,7 @@ async function deleteQueryBatch(query: FirebaseFirestore.Query, resolve: () => v
 // --- Account Deletion Function --- 
 export const deleteAccountAndData = onCall({
     region: 'us-central1',
+    enforceAppCheck: true,
     // Add secrets if needed for external service calls during deletion
 }, async (request) => {
     const logPrefix = '[ACCOUNT DELETE]';
@@ -1095,7 +1146,7 @@ export const deleteAccountAndData = onCall({
         await db.runTransaction(async (transaction) => {
             console.log(`${logPrefix} Starting transaction for account deletion process`);
             
-            const userRef = db.collection('users').doc(uid);
+        const userRef = db.collection('users').doc(uid);
             
             // Verify user exists
             const userDoc = await transaction.get(userRef);
@@ -1183,8 +1234,8 @@ export const deleteAccountAndData = onCall({
         // 8. Delete Firebase Auth User
         console.log(`${logPrefix} Deleting user from Firebase Authentication: ${uid}`);
         try {
-            await auth.deleteUser(uid);
-            console.log(`${logPrefix} Firebase Auth user deleted successfully.`);
+        await auth.deleteUser(uid);
+        console.log(`${logPrefix} Firebase Auth user deleted successfully.`);
         } catch (authError) {
             console.error(`${logPrefix} Error deleting Firebase Auth user:`, authError);
             // If we fail to delete the auth user but deleted their data, 

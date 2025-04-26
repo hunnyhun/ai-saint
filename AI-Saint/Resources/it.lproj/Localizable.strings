@@ -67,7 +67,7 @@
 "restorePurchases" = "Ripristina Acquisti";
 
 // MARK: - Accessibility
-"openSettings" = "Apre le impostazioni di sistema per cambiare la lingua dell'app";
+"openSettings" = "Apre le impostazioni di sistema per cambiare la lingua dell'app"; 
 
 /* Settings View */
 "account" = "Account";
@@ -105,4 +105,22 @@
 
 /* Errors */
 "errorTitle" = "Errore";
-"unknownError" = "Si è verificato un errore sconosciuto."; 
+"unknownError" = "Si è verificato un errore sconosciuto.";
+
+/* Sidebar Anonymous Prompt */
+"signUpOrLogIn" = "Registrati o accedi";
+"signUpBenefitText" = "Salva la chat, personalizza l'esperienza e le citazioni giornaliere.";
+
+/* Daily Quote Anonymous Prompt */
+"signInToViewDailyQuotes" = "Accedi per vedere le Citazioni Giornaliere";
+
+/* Sidebar Anonymous History Prompt */
+"signInToViewHistory" = "Accedi per vedere la cronologia chat.";
+
+/* Authentication View */
+"authSubtitle" = "Inizia la tua confessione digitale";
+"continueWithGoogle" = "Continua con Google";
+"continueWithApple" = "Continua con Apple";
+
+/* Anonymous Settings Button */
+"settingsButtonLabel" = "Impostazioni"; 

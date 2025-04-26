@@ -9,6 +9,7 @@ import RevenueCat
     var userEmail: String?
     var userId: String?
     var lastUpdated: Date = Date()
+    var isAnonymous: Bool = true // Default to true, update on auth change
     
     var isAuthenticated: Bool {
         authStatus == .authenticated
@@ -101,9 +102,10 @@ enum AppFeature {
             
             // Update auth state
             if let user = Auth.auth().currentUser {
-                print("DEBUG: [UserStatusManager] User authenticated: \(user.uid)")
-                state.authStatus = .authenticated
-                state.userEmail = user.email
+                print("DEBUG: [UserStatusManager] User authenticated: \(user.uid), Anonymous: \(user.isAnonymous)")
+                state.authStatus = .authenticated // Keep as authenticated
+                state.isAnonymous = user.isAnonymous // Set anonymous status
+                state.userEmail = user.email // Email will be nil for anonymous
                 state.userId = user.uid
                 
                 // Update RevenueCat user ID
@@ -138,22 +140,55 @@ enum AppFeature {
                     print("DEBUG: [UserStatusManager] Subscription state unchanged: \(wasSubscribed)")
                 }
             } else {
-                print("DEBUG: [UserStatusManager] User not authenticated")
+                print("DEBUG: [UserStatusManager] User transitioned to unauthenticated state.")
+                // Set local state immediately for responsiveness
                 state.authStatus = .unauthenticated
+                state.isAnonymous = true 
                 state.userEmail = nil
                 state.userId = nil
                 state.subscriptionTier = .free
+                state.lastUpdated = Date() // Update timestamp here
+                
+                // Attempt to sign in anonymously immediately after sign out
+                Task { @MainActor in
+                    print("DEBUG: [UserStatusManager] Attempting immediate anonymous sign-in after logout.")
+                    do {
+                        try await AuthenticationManager.shared.signInAnonymously()
+                        // IMPORTANT: Don't call updateUserState or post notification here.
+                        // The AuthStateDidChangeListener will trigger automatically on successful anonymous login,
+                        // leading to updateUserState being called again with the correct anonymous user state.
+                        print("DEBUG: [UserStatusManager] Anonymous sign-in call successful (listener will update state)." )
+                    } catch {
+                        print("ERROR: [UserStatusManager] Failed to sign in anonymously after logout: \(error.localizedDescription)")
+                        // If anonymous sign-in fails, we *do* need to notify about the unauthenticated state.
+                        NotificationCenter.default.post(
+                            name: Notification.Name("UserStateChanged"),
+                            object: nil,
+                            userInfo: [
+                                "authStatus": state.authStatus.rawValue,
+                                "isPremium": state.isPremium,
+                                "isAnonymous": state.isAnonymous,
+                                "timestamp": state.lastUpdated,
+                                "userId": state.userId as Any,
+                                "userEmail": state.userEmail as Any
+                            ]
+                        )
+                    }
+                }
+                // Return here - DO NOT post the notification for the unauthenticated state yet.
+                // Let the listener triggered by signInAnonymously handle the final state update.
+                return
             }
             
-            state.lastUpdated = Date()
-            
-            // Post single notification for all state changes
+            // Post notification only if user is authenticated (either fully or anonymously)
+            // This part is reached when the listener fires for an authenticated state.
             NotificationCenter.default.post(
                 name: Notification.Name("UserStateChanged"),
                 object: nil,
                 userInfo: [
                     "authStatus": state.authStatus.rawValue,
                     "isPremium": state.isPremium,
+                    "isAnonymous": state.isAnonymous,
                     "timestamp": state.lastUpdated,
                     "userId": state.userId as Any,
                     "userEmail": state.userEmail as Any

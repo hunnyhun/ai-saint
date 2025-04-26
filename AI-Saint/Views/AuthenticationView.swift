@@ -1,5 +1,5 @@
 import SwiftUI
-import Foundation
+import RevenueCat
 
 // MARK: - Background Components
 struct HolyBackground: View {
@@ -194,18 +194,10 @@ struct AuthenticationView: View {
                     }
                     .padding(.top, 40) // Reduced from 60 to 40 to move everything up
                     
-                    Text("Begin your digital confession")
+                    Text("authSubtitle".localized)
                         .font(.custom("Avenir-Medium", size: 22))
                         .foregroundStyle(.white.opacity(0.9))
                         .padding(.top, 15)
-                    
-                    // Anonymous info message
-                    Text("Create an account for unlimited messages and to save your conversations.")
-                        .font(.custom("Avenir", size: 16))
-                        .foregroundStyle(.white.opacity(0.8))
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 40)
-                        .padding(.top, 20)
                     
                     // Error Message
                     if let error = errorMessage {
@@ -225,7 +217,7 @@ struct AuthenticationView: View {
                             HStack {
                                 Image(systemName: "g.circle.fill")
                                     .font(.title2)
-                                Text("Continue with Google")
+                                Text("continueWithGoogle".localized)
                                     .font(.custom("Avenir-Medium", size: 18))
                             }
                             .frame(maxWidth: .infinity)
@@ -243,7 +235,7 @@ struct AuthenticationView: View {
                             HStack {
                                 Image(systemName: "apple.logo")
                                     .font(.title2)
-                                Text("Continue with Apple")
+                                Text("continueWithApple".localized)
                                     .font(.custom("Avenir-Medium", size: 18))
                             }
                             .frame(maxWidth: .infinity)
@@ -273,7 +265,6 @@ struct AuthenticationView: View {
                     .disabled(isLoading)
                 }
             }
-            .interactiveDismissDisabled(true)
             .onChange(of: authManager.isAuthenticated) { _, isAuthenticated in
                 if isAuthenticated {
                     // Print debug message to track this event

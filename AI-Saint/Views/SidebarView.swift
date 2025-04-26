@@ -1,124 +1,245 @@
 import SwiftUI
-import FirebaseAuth
 
 struct SidebarView: View {
     // MARK: - Properties
-    @Binding var showAuthView: Bool
-    @Binding var selectedFeature: Models.Feature?
-    @Bindable var chatViewModel: ChatViewModel
-    @State private var showSettingsSheet = false
-    
-    // Environment
     let userStatusManager = UserStatusManager.shared
     let notificationManager = NotificationManager.shared
+    @Binding var showAuthView: Bool
+    @Binding var selectedFeature: Models.Feature?
+    let chatViewModel: ChatViewModel
     @State private var showPaywall = false
     @State private var showAccountMenu = false
+    @State private var showSettings = false
     @State private var showDailyQuote = false
     
     // MARK: - Body
     var body: some View {
         VStack(spacing: 0) {
-            // Chat history list
-            ScrollView {
-                LazyVStack(spacing: 8, pinnedViews: [.sectionHeaders]) {
-                    if chatViewModel.isLoadingHistory && chatViewModel.chatHistory.isEmpty {
-                        HStack {
-                            Spacer()
-                            ProgressView()
-                            Spacer()
-                        }
-                        .padding()
-                    } else if chatViewModel.chatHistory.isEmpty {
-                        Text("noChatsYet".localized)
+            // Premium Banner - keep as requested
+            if !userStatusManager.state.isPremium && !userStatusManager.state.isAnonymous {
+                Button(action: {
+                    print("DEBUG: Opening paywall")
+                    showPaywall = true
+                }) {
+                    HStack {
+                        Image(systemName: "star.circle.fill")
+                            .foregroundColor(.yellow)
+                        Text("upgradeToPremiumButton".localized)
+                            .bold()
+                        Spacer()
+                        Image(systemName: "chevron.right")
                             .foregroundColor(.gray)
+                    }
+                    .foregroundColor(.primary)
+                    .padding()
+                    .background(Color(.secondarySystemBackground))
+                    .cornerRadius(10)
+                    .padding(.horizontal)
+                }
+                .padding(.top, 8)
+            }
+            
+            // Daily Quote Button
+            Button(action: {
+                // Clear notification count before showing view
+                if notificationManager.unreadNotificationCount > 0 {
+                    print("📱 [SidebarView] Clearing \(notificationManager.unreadNotificationCount) notifications")
+                    notificationManager.markNotificationsAsRead()
+                }
+                
+                // Then show the daily quote view
+                print("📱 [SidebarView] Opening Daily Quote view")
+                showDailyQuote = true
+            }) {
+                HStack {
+                    Image(systemName: "quote.bubble.fill")
+                        .foregroundColor(.yellow)
+                    Text("dailySpiritualQuote".localized)
+                        .bold()
+                    Spacer()
+                    
+                    // Badge showing unread notification count
+                    if notificationManager.unreadNotificationCount > 0 {
+                        ZStack {
+                            Circle()
+                                .fill(Color.red)
+                                .frame(width: 22, height: 22)
+                            
+                            Text("\(notificationManager.unreadNotificationCount)")
+                                .font(.caption2)
+                                .bold()
+                                .foregroundColor(.white)
+                        }
+                    }
+                    
+                    Image(systemName: "chevron.right")
+                        .foregroundColor(.gray)
+                }
+                .foregroundColor(.primary)
+                .padding()
+                .background(Color(.secondarySystemBackground))
+                .cornerRadius(10)
+                .padding(.horizontal)
+            }
+            .padding(.top, 8)
+            
+            // Settings Button for Anonymous Users
+            if userStatusManager.state.isAnonymous {
+                Button { 
+                    showSettings = true
+                } label: {
+                     HStack {
+                        Image(systemName: "gearshape.fill") // Settings icon
+                            .foregroundColor(.gray)
+                        Text("settingsButtonLabel".localized) // Use localized key
+                            .bold()
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .foregroundColor(.gray)
+                    }
+                    .foregroundColor(.primary)
+                    .padding()
+                    .background(Color(.secondarySystemBackground))
+                    .cornerRadius(10)
+                    .padding(.horizontal)
+                }
+                .padding(.top, 8) // Spacing below daily quote button
+            }
+            
+            // Chat history section with headers like ChatGPT
+            VStack(spacing: 0) {
+                // Chat history list
+                ScrollView {
+                    LazyVStack(spacing: 8, pinnedViews: [.sectionHeaders]) {
+                        if userStatusManager.state.isAnonymous {
+                            // Show message for anonymous users
+                            Text("signInToViewHistory".localized) // Use localized key
+                                .foregroundColor(.secondary)
+                                .font(.footnote)
+                                .padding()
+                                .frame(maxWidth: .infinity, alignment: .center)
+                        } else if chatViewModel.isLoadingHistory && chatViewModel.chatHistory.isEmpty {
+                            // Show loading indicator if not anonymous and loading
+                            HStack {
+                                Spacer()
+                                ProgressView()
+                                Spacer()
+                            }
                             .padding()
-                    } else {
-                        // Display sections using our new sectionedHistory property
-                        ForEach(chatViewModel.sectionedHistory, id: \.section.id) { section in
-                            Section(header: sectionHeader(title: section.section.rawValue)) {
-                                ForEach(section.conversations) { history in
-                                    chatHistoryRow(history: history)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
+                        } else if chatViewModel.chatHistory.isEmpty {
+                            // Show no chats message if not anonymous and history is empty
+                            Text("noChatsYet".localized)
+                                .foregroundColor(.gray)
+                                .padding()
+                        } else {
+                            // Display sections if not anonymous and history is loaded
+                            ForEach(chatViewModel.sectionedHistory, id: \.section.id) { section in
+                                Section(header: sectionHeader(title: section.section.rawValue)) {
+                                    ForEach(section.conversations) { history in
+                                        chatHistoryRow(history: history)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
                                 }
                             }
                         }
                     }
+                    .padding(.horizontal)
                 }
-                .padding(.horizontal)
             }
-        }
-        .frame(maxHeight: .infinity)
-        
-        // User profile at bottom
-        userProfileView
-            .sheet(isPresented: $showSettingsSheet) {
-                SettingsView(showPaywall: .constant(false))
-            }
-    }
-    
-    // MARK: - User Profile View
-    private var userProfileView: some View {
-        VStack(spacing: 0) {
-            Divider()
-                .padding(.bottom, 12)
+            .frame(maxHeight: .infinity)
             
-            HStack(spacing: 16) {
-                // User avatar
-                Circle()
-                    .fill(Color.gray.opacity(0.2))
-                    .frame(width: 45, height: 45)
-                    .overlay(
-                        Image(systemName: "person.fill")
-                            .foregroundColor(.gray)
-                    )
-                
-                VStack(alignment: .leading, spacing: 4) {
-                    // If anonymous user, show "Anonymous" and sign in button
-                    if Auth.auth().currentUser?.isAnonymous == true {
-                        Text("anonymousUser".localized)
-                            .font(.subheadline)
-                            .foregroundColor(.gray)
-                        
-                        Button {
-                            showAuthView = true
-                        } label: {
-                            Text("signIn".localized)
+            // User profile at bottom
+            HStack(spacing: 12) {
+                // User Info or Sign In Button
+                if userStatusManager.state.isAuthenticated {
+                    if userStatusManager.state.isAnonymous {
+                        // Anonymous User - Show Sign In Prompt
+                        VStack(spacing: 8) {
+                            // Promotional Text (Moved Above Button)
+                            Text("signUpBenefitText".localized)
                                 .font(.caption)
-                                .fontWeight(.medium)
-                                .foregroundColor(.blue)
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal)
+                                .padding(.bottom, 4) // Add small padding below text
+                            
+                            // Sign In / Sign Up Button
+                            Button { 
+                                showAuthView = true
+                            } label: {
+                                Text("signUpOrLogIn".localized) // Use localized key
+                                    .font(.headline)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.white.opacity(0.8)) // Dark text on yellow
+                                    .padding(.vertical, 10)
+                                    .padding(.horizontal, 20)
+                                    .frame(maxWidth: .infinity) 
+                                    .background(Color.yellow.opacity(0.8)) // Golden background
+                                    .cornerRadius(10)
+                            }
+                            .padding(.horizontal) // Padding for the button
                         }
+                        .frame(maxWidth: .infinity) // Center the VStack content
                     } else {
-                        // For regular users, show email and subscription status
-                        if let email = userStatusManager.state.userEmail {
-                            Text(email)
-                                .font(.subheadline)
-                                .lineLimit(1)
-                        } else {
-                            Text("anonymousUser".localized)
-                                .font(.subheadline)
-                                .foregroundColor(.gray)
-                        }
+                        // Authenticated User - Show User Info
+                    HStack {
+                        // User avatar
+                        Circle()
+                            .fill(Color.blue.opacity(0.2))
+                            .frame(width: 36, height: 36)
+                            .overlay(
+                                Text(userStatusManager.state.userEmail?.prefix(1).uppercased() ?? "U")
+                                    .font(.system(size: 18, weight: .bold))
+                                    .foregroundColor(.blue)
+                            )
                         
-                        Text(userStatusManager.state.isPremium ? "premium".localized : "freeAccount".localized)
-                            .font(.caption)
-                            .foregroundColor(userStatusManager.state.isPremium ? .green : .gray)
+                        VStack(alignment: .leading, spacing: 2) {
+                            // User email text with overflow handling
+                            if let email = userStatusManager.state.userEmail {
+                                Text(email)
+                                    .font(.footnote)
+                                    .lineLimit(1)
+                                    .foregroundColor(.primary)
+                            }
+                            
+                            // Subscription tier
+                            Text(userStatusManager.state.subscriptionTier.displayText.capitalized)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    
+                    Spacer()
+                    
+                        // Settings button (only for non-anonymous users)
+                    Button(action: {
+                        showSettings = true
+                    }) {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 18))
+                            .foregroundColor(.gray)
+                            .padding(8)
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                
-                // Settings button
-                Button {
-                    showSettingsSheet = true
-                } label: {
-                    Image(systemName: "gearshape.fill")
-                        .foregroundColor(.gray)
-                        .frame(width: 22, height: 22)
                 }
+                // No need for an else here, as ContentView handles initial anonymous login
             }
-            .padding(.horizontal)
-            .padding(.bottom, 16)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(Color(.systemBackground))
+            .shadow(color: Color.black.opacity(0.1), radius: 3, x: 0, y: -2)
         }
-        .background(Color(.secondarySystemBackground))
+        .background(Color(.systemBackground))
+        .sheet(isPresented: $showSettings) {
+            SettingsView(showPaywall: $showPaywall)
+        }
+        .sheet(isPresented: $showPaywall) {
+            PaywallView()
+        }
+        .sheet(isPresented: $showDailyQuote) {
+            DailyQuoteView(fromNotification: false)
+        }
     }
     
     // MARK: - Section Header
