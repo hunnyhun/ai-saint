@@ -305,7 +305,7 @@ import FirebaseMessaging
     // MARK: - Helper Methods for Device Token
     
     // New method to get current FCM token
-    private func getCurrentFCMToken() -> String? {
+    func getCurrentFCMToken() -> String? {
         // Try to get token from AppDelegate first
         if let appDelegate = UIApplication.shared.delegate as? AppDelegate,
            let fcmToken = appDelegate.fcmToken {
@@ -423,6 +423,20 @@ import FirebaseMessaging
             "badgeCount": 0, // Always start with zero when registering device
             "lastUpdated": FieldValue.serverTimestamp()
         ], merge: true)
+    }
+    
+    // Function to remove a specific device token for a given user
+    func removeDeviceTokenFromUser(userId: String, fcmToken: String) async {
+        print("📱 [NotificationManager] Attempting to remove token \(fcmToken.prefix(10))... for user \(userId)")
+        let deviceRef = db.collection("users").document(userId).collection("devices").document(fcmToken)
+        
+        do {
+            try await deviceRef.delete()
+            print("📱 [NotificationManager] Successfully removed device token \(fcmToken.prefix(10))... for user \(userId)")
+        } catch {
+            print("❌ [NotificationManager] Failed to remove device token \(fcmToken.prefix(10))... for user \(userId): \(error.localizedDescription)")
+            // Handle error appropriately, maybe retry or log specifically
+        }
     }
     
     // Helper to update only the badge count in Firestore

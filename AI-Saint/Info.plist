@@ -2,31 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>ITSAppUsesNonExemptEncryption</key>
-	<false/>
-	<key>CFBundleURLTypes</key>
-	<array>
-		<dict>
-			<key>CFBundleURLSchemes</key>
-			<array>
-				<string>com.googleusercontent.apps.647533876699-0fj8hphne8nb7gtme55j6odaafo0sb6v</string>
-			</array>
-		</dict>
-	</array>
-	<key>LSSupportsOpeningDocumentsInPlace</key>
-	<false/>
-	<key>UISupportsDocumentBrowser</key>
-	<false/>
-	<key>UIBackgroundModes</key>
-	<array>
-		<string>remote-notification</string>
-	</array>
-	<key>NSAppleMusicUsageDescription</key>
-	<string>We need access to send you daily inspirational quotes.</string>
-	<key>NSUserNotificationUsageDescription</key>
-	<string>We'd like to send you daily spiritual quotes to inspire your journey.</string>
-	<key>NSUserTrackingUsageDescription</key>
-	<string>Your data may be used to personalize quotes and improve AI response</string>
 	<key>CFBundleLocalizations</key>
 	<array>
 		<string>en</string>
@@ -36,23 +11,20 @@
 		<string>pt</string>
 		<string>pt-BR</string>
 	</array>
-	<key>CFBundleDevelopmentRegion</key>
-	<string>en</string>
-	<key>UILaunchStoryboardName</key>
-	<string>Launch Screen</string>
-	<key>UISupportedInterfaceOrientations</key>
+	<key>CFBundleURLTypes</key>
 	<array>
-		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
-		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<dict>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.647533876699-0fj8hphne8nb7gtme55j6odaafo0sb6v</string>
+			</array>
+		</dict>
 	</array>
-	<key>UISupportedInterfaceOrientations~ipad</key>
+	<key>NSUserNotificationUsageDescription</key>
+	<string>We'd like to send you daily spiritual quotes to inspire your journey.</string>
+	<key>UIBackgroundModes</key>
 	<array>
-		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
-		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>remote-notification</string>
 	</array>
 </dict>
 </plist>

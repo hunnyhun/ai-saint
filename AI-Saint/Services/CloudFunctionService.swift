@@ -235,7 +235,7 @@ enum CloudFunctionError: Error {
             guard let responseData = result.data as? [String: Any], responseData["success"] as? Bool == true else {
                 // Check if there's an error message in the response (though the function throws HttpsError on failure)
                 let message = (result.data as? [String: Any])?["message"] as? String ?? "Unknown error during deletion."
-                print("🌩️ Failed to confirm successful deletion from backend: \(result.data ?? "No data")")
+                print("🌩️ Failed to confirm successful deletion from backend: \(result.data)")
                 throw CloudFunctionError.serverError(message)
             }
             

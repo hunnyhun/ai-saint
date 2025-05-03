@@ -47,6 +47,8 @@ struct SectionedChatHistory {
     private var lastLoadTime: Date?
     private let loadThrottleInterval: TimeInterval = 3.0 // seconds
     private var observerSetup = false
+    var showAnonymousLimitAlert = false
+    var triggerAuthView = false
     
     // MARK: - Init
     init(cloudService: CloudFunctionService = CloudFunctionService()) {
@@ -391,10 +393,19 @@ struct SectionedChatHistory {
         } catch let cloudError as CloudFunctionError {
             // Handle Cloud Function specific errors
             switch cloudError {
-            case .rateLimitExceeded:
-                isRateLimited = true
-                setErrorMessage(cloudError.localizedDescription)
-                print("[Chat] Rate limit exceeded, showing upgrade UI")
+            case .rateLimitExceeded(let message):
+                // Check if this is the anonymous limit message
+                if message.localizedStandardContains("anonymous access") {
+                    print("[Chat] Anonymous rate limit exceeded")
+                    self.showAnonymousLimitAlert = true // Trigger specific alert
+                    self.isRateLimited = false // Don't show premium button
+                    self.error = nil // Clear generic error message
+                } else {
+                    // Assume it's the authenticated free limit
+                    print("[Chat] Authenticated free rate limit exceeded")
+                    self.isRateLimited = true // Show premium button
+                    setErrorMessage(message)
+                }
             default:
                 setErrorMessage(cloudError.localizedDescription)
             }
@@ -416,6 +427,8 @@ struct SectionedChatHistory {
         if let message = message {
             print("[Chat] Error: \(message)")
         }
+        // Ensure anonymous alert isn't shown for general errors
+        // self.showAnonymousLimitAlert = false // Don't reset here, let the view handle dismissal
     }
     
     // MARK: - Saving Conversation

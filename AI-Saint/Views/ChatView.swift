@@ -20,6 +20,9 @@ struct ChatView: View {
     @Binding var showSidebarCallback: Bool
     @State private var shouldScrollToBottom = false
     
+    // State to control AuthenticationView presentation
+    @State private var showAuthSheet = false
+    
     // Note: ChatViewModel should implement isRateLimited property
     // that gets set to true when receiving a resource-exhausted error from backend
     
@@ -80,6 +83,20 @@ struct ChatView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Add the new alert modifier here
+        .alert("anonymousLimitTitle".localized, isPresented: $viewModel.showAnonymousLimitAlert) {
+            Button("cancelButton".localized, role: .cancel) { }
+            Button("signUpOrLogInButton".localized) { 
+                // Set the state to show the auth sheet
+                showAuthSheet = true 
+            }
+        } message: {
+            Text("anonymousLimitMessage".localized)
+        }
+        // Add sheet modifier to present AuthenticationView
+        .sheet(isPresented: $showAuthSheet) {
+            AuthenticationView()
+        }
     }
     
     // MARK: - Toolbar View
@@ -243,7 +260,7 @@ struct ChatView: View {
     private var inputTextField: some View {
         ZStack(alignment: .trailing) {
             TextField(
-                viewModel.isRateLimited ? "messageLimitReachedShort".localized : "confessThoughts".localized,
+                "confessThoughts".localized,
                 text: $messageText,
                 axis: .vertical
             )

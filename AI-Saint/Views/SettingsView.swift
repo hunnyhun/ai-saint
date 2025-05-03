@@ -50,79 +50,83 @@ struct SettingsView: View {
                     .accessibilityHint("openSettings".localized)
                 }
                 
-                // MARK: - Purchases Section
-                Section("purchases".localized) {
-                    Button {
-                        Task {
-                            isRestoring = true
-                            do {
-                                print("Attempting to restore purchases...")
-                                try await subscriptionManager.restorePurchases()
-                                if subscriptionManager.currentSubscription == .premium {
-                                    restoreAlertMessage = "restoreSuccessMessage".localized
-                                } else {
-                                    restoreAlertMessage = subscriptionManager.errorMessage ?? "restoreNoPurchasesFound".localized
+                
+                
+                // MARK: - Delete Account Section (Only show for non-anonymous users)
+                if !userStatusManager.state.isAnonymous {
+                    // MARK: - Purchases Section
+                    Section("purchases".localized) {
+                        Button {
+                            Task {
+                                isRestoring = true
+                                do {
+                                    print("Attempting to restore purchases...")
+                                    try await subscriptionManager.restorePurchases()
+                                    if subscriptionManager.currentSubscription == .premium {
+                                        restoreAlertMessage = "restoreSuccessMessage".localized
+                                    } else {
+                                        restoreAlertMessage = subscriptionManager.errorMessage ?? "restoreNoPurchasesFound".localized
+                                    }
+                                    print("Restore finished. Message: \(restoreAlertMessage)")
+                                } catch {
+                                    print("ERROR: Restore failed in View: \(error.localizedDescription)")
+                                    restoreAlertMessage = "restoreFailedMessage".localized
                                 }
-                                print("Restore finished. Message: \(restoreAlertMessage)")
-                            } catch {
-                                print("ERROR: Restore failed in View: \(error.localizedDescription)")
-                                restoreAlertMessage = "restoreFailedMessage".localized
+                                isRestoring = false
+                                showingRestoreAlert = true
                             }
-                            isRestoring = false
-                            showingRestoreAlert = true
+                        } label: {
+                            HStack {
+                                if isRestoring {
+                                    ProgressView()
+                                        .progressViewStyle(.circular)
+                                        .frame(width: 20, height: 20)
+                                } else {
+                                    Image(systemName: "arrow.clockwise")
+                                }
+                                Text("restorePurchases".localized)
+                            }
                         }
-                    } label: {
-                        HStack {
-                            if isRestoring {
-                                ProgressView()
-                                    .progressViewStyle(.circular)
-                                    .frame(width: 20, height: 20)
-                            } else {
-                                Image(systemName: "arrow.clockwise")
+                        .disabled(isRestoring)
+                    }
+                    Section("account".localized) {
+                        Button(role: .destructive) {
+                            showingDeleteConfirm = true
+                        } label: {
+                            HStack {
+                                if isDeleting {
+                                    ProgressView()
+                                } else {
+                                    Image(systemName: "trash")
+                                    Text("deleteAccount".localized)
+                                }
+                                Spacer()
                             }
-                            Text("restorePurchases".localized)
+                        }
+                        .disabled(isDeleting)
+                    }
+                    // MARK: - Sign Out Section
+                    Section {
+                        Button(role: .destructive) {
+                            Task {
+                                do {
+                                    try await userStatusManager.signOut()
+                                    dismiss()
+                                } catch {
+                                    print("ERROR: Sign out failed: \(error.localizedDescription)")
+                                }
+                            }
+                        } label: {
+                            HStack {
+                                Image(systemName: "rectangle.portrait.and.arrow.right")
+                                Text("signOut".localized)
+                                Spacer()
+                            }
                         }
                     }
-                    .disabled(isRestoring)
                 }
                 
-                // MARK: - Delete Account Section
-                Section("account".localized) {
-                    Button(role: .destructive) {
-                        showingDeleteConfirm = true
-                    } label: {
-                        HStack {
-                            if isDeleting {
-                                ProgressView()
-                            } else {
-                                Image(systemName: "trash")
-                                Text("deleteAccount".localized)
-                            }
-                            Spacer()
-                        }
-                    }
-                    .disabled(isDeleting)
-                }
                 
-                // MARK: - Sign Out Section
-                Section {
-                    Button(role: .destructive) {
-                        Task {
-                            do {
-                                try await userStatusManager.signOut()
-                                dismiss()
-                            } catch {
-                                print("ERROR: Sign out failed: \(error.localizedDescription)")
-                            }
-                        }
-                    } label: {
-                        HStack {
-                            Image(systemName: "rectangle.portrait.and.arrow.right")
-                            Text("signOut".localized)
-                            Spacer()
-                        }
-                    }
-                }
             }
             .navigationTitle("settings".localized)
             .navigationBarTitleDisplayMode(.inline)

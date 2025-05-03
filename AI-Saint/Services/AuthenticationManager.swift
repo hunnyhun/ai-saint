@@ -3,6 +3,7 @@ import FirebaseAuth
 import GoogleSignIn
 import AuthenticationServices
 import FirebaseCore
+import FirebaseFunctions
 import CryptoKit
 import os
 
@@ -117,19 +118,51 @@ import os
         }
     }
     
-    // Anonymous Sign In
+    // Anonymous Sign In (Using Persistent Keychain ID and Custom Tokens - Backend Required)
     func signInAnonymously() async throws {
         isLoading = true
         defer { isLoading = false }
-        
-        print("DEBUG: Attempting anonymous sign in...")
+
+        print("DEBUG: [AuthManager] Attempting sign in with persistent anonymous ID...")
+
         do {
-            let authResult = try await Auth.auth().signInAnonymously()
-            self.user = authResult.user
-            print("DEBUG: Successfully signed in anonymously. User: \(authResult.user.uid)")
+            var persistentId: String?
+            
+            // 1. Try to get existing ID from Keychain
+            persistentId = try KeychainHelper.shared.getAnonymousId()
+
+            if let existingId = persistentId {
+                // 2a. Existing ID found
+                print("DEBUG: [AuthManager] Found persistent anonymous ID in Keychain: \(existingId)")
+                // Call backend to get custom token for existing persistent ID
+                let customToken = try await getCustomTokenFromServer(for: existingId)
+                let authResult = try await Auth.auth().signIn(withCustomToken: customToken)
+                self.user = authResult.user
+                print("DEBUG: [AuthManager] Successfully signed in with custom token for existing ID: \(authResult.user.uid)")
+
+            } else {
+                // 2b. No existing ID found - Generate, save, and use a new one
+                let newId = UUID().uuidString
+                print("DEBUG: [AuthManager] No persistent anonymous ID found. Generating new ID: \(newId)")
+                try KeychainHelper.shared.saveAnonymousId(newId)
+                print("DEBUG: [AuthManager] Saved new persistent anonymous ID to Keychain.")
+                persistentId = newId // Use the new ID for the next step
+
+                // Call backend to get custom token for new persistent ID
+                let customToken = try await getCustomTokenFromServer(for: newId)
+                let authResult = try await Auth.auth().signIn(withCustomToken: customToken)
+                self.user = authResult.user
+                print("DEBUG: [AuthManager] Successfully signed in with custom token for NEW ID: \(authResult.user.uid)")
+
+            }
+
+        } catch let keychainError as KeychainError {
+            print("ERROR: [AuthManager] Keychain error during anonymous sign in: \(keychainError)")
+            // Handle specific keychain errors if needed
+            throw keychainError // Re-throw for caller
         } catch {
-            print("ERROR: Anonymous sign in error: \(error.localizedDescription)")
-            throw error
+            print("ERROR: [AuthManager] Unexpected error during anonymous sign in: \(error.localizedDescription)")
+            throw error // Re-throw
         }
     }
     
@@ -186,6 +219,28 @@ extension AuthenticationManager {
 
 // MARK: - Helper Methods
 private extension AuthenticationManager {
+    /// Calls the backend Cloud Function to get a Firebase custom token for the given persistent anonymous ID.
+    /// - Parameter id: The persistent anonymous ID (UUID string).
+    /// - Returns: The custom token string.
+    /// - Throws: An error if the function call fails or the response is invalid.
+    func getCustomTokenFromServer(for id: String) async throws -> String {
+        let functions = Functions.functions(region: "us-central1")
+        do {
+            let result = try await functions.httpsCallable("getCustomAuthTokenForAnonymousId").call(["persistentId": id])
+            if let data = result.data as? [String: Any],
+               let customToken = data["customToken"] as? String {
+                print("DEBUG: [AuthManager] Received custom token from backend for persistentId: \(id)")
+                return customToken
+            } else {
+                print("ERROR: [AuthManager] Malformed response from backend: \(result.data)")
+                throw AuthError.tokenError
+            }
+        } catch {
+            print("ERROR: [AuthManager] Failed to get custom token from backend: \(error.localizedDescription)")
+            throw error
+        }
+    }
+
     // Generate random nonce for Apple Sign In
     func randomNonceString(length: Int = 32) -> String {
         precondition(length > 0)

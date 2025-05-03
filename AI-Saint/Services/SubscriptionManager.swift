@@ -64,7 +64,7 @@ import FirebaseAuth
                 print("ERROR: [SubscriptionManager] RevenueCat login failed: \(error.localizedDescription)")
             }
         } 
-        else if firebaseUserID == nil, currentAppUserID != nil {
+        else if firebaseUserID == nil {
             print("DEBUG: [SubscriptionManager] Firebase user logged out, but RC App User ID (\(currentAppUserID)) exists. Logging out from RevenueCat.")
             do {
                 let customerInfo = try await Purchases.shared.logOut()
@@ -203,7 +203,7 @@ import FirebaseAuth
             let isPremiumActive = customerInfo.entitlements["Monthly Premium"]?.isActive == true
             let restoredAppUserID = customerInfo.originalAppUserId // Use originalAppUserId which should be stable
             
-            print("DEBUG: [SubscriptionManager] Restore check: isPremiumActive=\(isPremiumActive), restoredAppUserID=\(restoredAppUserID ?? "nil"), currentFirebaseUID=\(firebaseUserID)")
+            print("DEBUG: [SubscriptionManager] Restore check: isPremiumActive=\(isPremiumActive), restoredAppUserID=\(restoredAppUserID), currentFirebaseUID=\(firebaseUserID)")
 
             if isPremiumActive {
                 // **CRITICAL CHECK**: Validate that the restored App User ID matches the current Firebase User ID
@@ -212,7 +212,7 @@ import FirebaseAuth
                     currentSubscription = .premium
                 } else {
                     // Mismatch detected! Do not grant premium.
-                    print("WARN: [SubscriptionManager] Restore successful, but App User ID (\(restoredAppUserID ?? "nil")) does not match current Firebase UID (\(firebaseUserID)). Potential abuse attempt or account switching. Not granting premium.")
+                    print("WARN: [SubscriptionManager] Restore successful, but App User ID (\(restoredAppUserID)) does not match current Firebase UID (\(firebaseUserID)). Potential abuse attempt or account switching. Not granting premium.")
                     currentSubscription = .free // Keep user as free
                     // Optionally show an alert to the user explaining the mismatch.
                      errorMessage = "Restored purchase belongs to a different user account."

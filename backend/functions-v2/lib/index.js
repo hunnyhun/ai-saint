@@ -33,7 +33,7 @@ const queue = 'daily-quote-notifications';
 const parent = tasksClient.queuePath(project || '', location, queue);
 console.log('✅ Cloud Tasks Client initialized for queue:', parent);
 // Define a limit specifically for anonymous users
-const ANONYMOUS_MESSAGE_LIMIT = 3; // Limit set to 3
+const ANONYMOUS_MESSAGE_LIMIT = 2; // Limit set to 3
 // Check if user has premium subscription
 async function checkUserSubscription(uid) {
     try {
@@ -132,14 +132,22 @@ export const getChatHistoryV2 = onCall({
     enforceAppCheck: true,
 }, async (request) => {
     try {
-        // Debug log
         console.log('📱 Fetching chat history...');
-        // Check authentication
         if (!request.auth) {
-            throw new Error('User must be authenticated');
+            console.error('❌ Chat history requested without authentication.');
+            throw new HttpsError('unauthenticated', 'User must be authenticated.');
         }
+        // --- Anonymous User Check ---
+        const isAnonymous = request.auth.token.firebase?.sign_in_provider === 'anonymous';
+        if (isAnonymous) {
+            console.log('🚫 Anonymous user attempted to fetch chat history. Denying access.');
+            // Return empty array or throw an error - returning empty is often better UI
+            // throw new HttpsError('permission-denied', 'Sign in to view chat history.');
+            return []; // Return empty history for anonymous users
+        }
+        // --- End Anonymous User Check ---
         const uid = request.auth.uid;
-        console.log('👤 User authenticated:', { userId: uid, token: request.auth.token });
+        console.log('👤 Authenticated user requesting history:', { userId: uid });
         try {
             console.log('🔍 Attempting to query Firestore users collection for user:', uid);
             const snapshot = await db
@@ -258,17 +266,25 @@ export const processChatMessageV2 = onCall({
         }
         const { message, conversationId } = data;
         const uid = request.auth.uid;
-        const signInProvider = request.auth.token.firebase?.sign_in_provider || 'unknown';
-        const isAnonymousUser = signInProvider === 'anonymous';
-        console.log('👤 User authenticated:', {
-            userId: uid,
-            provider: signInProvider,
-            isAnonymous: isAnonymousUser,
-            email: request.auth.token.email || 'none'
-        });
+        // --- Get full user record to check providerData for anonymity ---
+        let isEffectivelyAnonymous = false;
+        let isPremium = false; // Determine premium status later
+        try {
+            const authUser = await getAuth().getUser(uid);
+            isEffectivelyAnonymous = authUser.providerData.length === 0;
+            console.log(`👤 User record fetched: UID=${uid}, ProviderData empty=${isEffectivelyAnonymous}`);
+        }
+        catch (userError) {
+            console.error(`❌ Error fetching auth user record for ${uid}:`, userError);
+            // If we can't fetch the user, treat as non-anonymous and non-premium for safety
+            // Or throw an error if this shouldn't happen
+            throw new HttpsError('internal', 'Could not verify user authentication status.');
+        }
+        // --- End user record fetch ---
         // --- Anonymous User Limit Check ---
-        if (isAnonymousUser) {
-            console.log('🕵️ User is anonymous. Checking message limits.');
+        // Use the isEffectivelyAnonymous flag derived from providerData
+        if (isEffectivelyAnonymous) {
+            console.log('🕵️ User is effectively anonymous. Checking message limits.');
             const userRef = db.collection('users').doc(uid);
             let anonymousMessageCount = 0;
             try {
@@ -280,36 +296,50 @@ export const processChatMessageV2 = onCall({
                 // *** Check against the limit ***
                 if (anonymousMessageCount >= ANONYMOUS_MESSAGE_LIMIT) {
                     console.log('🚫 Anonymous user has exceeded message limit.');
-                    throw new HttpsError('resource-exhausted', 'You have reached the message limit for anonymous access. Please sign in or sign up to continue chatting.');
+                    // --- RETURN THE CORRECT ANONYMOUS LIMIT MESSAGE --- 
+                    throw new HttpsError('resource-exhausted', 'You have reached the message limit for anonymous access. Please sign up or log in to continue chatting.');
                 }
+                // --- Increment anonymous count --- 
+                // Do this *before* calling Gemini, outside the try/catch for limit check
+                // Ensures count increments even if Gemini fails later
+                await userRef.set({ anonymousMessageCount: FieldValue.increment(1) }, { merge: true });
+                console.log(`🕵️ Incremented anonymousMessageCount for ${uid}`);
+                // --- End Increment --- 
             }
             catch (error) {
-                console.error('❌ Error fetching user data for anonymous limit check:', error);
-                // Decide if you want to block or allow if the check fails. Blocking is safer.
-                throw new HttpsError('internal', 'Could not verify usage limits.');
+                console.error('❌ Error fetching/updating user data for anonymous limit check:', error);
+                throw new HttpsError('internal', 'Could not verify or update usage limits.');
             }
         }
         else {
-            console.log('✅ User is not anonymous. Skipping anonymous limit check.');
-            // Optional: You could still apply general free-tier limits here if needed
-            // const isPremium = await checkUserSubscription(uid);
-            // if (!isPremium) { /* check free tier limits */ }
-        }
-        // --- End Anonymous User Limit Check ---
-        // App Check has already been enforced if you reach this point
-        // The request.app object might contain token details if needed,
-        // Check if user has premium subscription
-        const isPremium = await checkUserSubscription(uid);
-        console.log('💲 User subscription status:', isPremium ? 'Premium' : 'Free');
-        // If user is not premium, check message limits
-        if (!isPremium) {
-            const withinLimits = await checkMessageLimits(uid);
-            if (!withinLimits) {
-                console.log('🚫 Free tier user has exceeded lifetime message limit');
-                // Throw a specific HttpsError for rate limiting
-                throw new HttpsError('resource-exhausted', 'You have reached the message limit for the free tier. Please upgrade to premium for unlimited messages.');
+            // --- Authenticated User Limit Check (Only if NOT anonymous) ---
+            console.log('✅ User is not anonymous. Checking subscription and free limits.');
+            isPremium = await checkUserSubscription(uid); // Check premium status only for non-anonymous
+            console.log('💲 User subscription status:', isPremium ? 'Premium' : 'Free');
+            if (!isPremium) {
+                const withinLimits = await checkMessageLimits(uid);
+                if (!withinLimits) {
+                    console.log('🚫 Authenticated free tier user has exceeded lifetime message limit');
+                    // --- RETURN THE AUTHENTICATED FREE LIMIT MESSAGE --- 
+                    throw new HttpsError('resource-exhausted', 'You have reached the message limit for the free tier. Please upgrade to premium for unlimited messages.');
+                }
+                // --- Increment authenticated count (only if within limits) --- 
+                try {
+                    await db.collection('users').doc(uid).set({ messageCount: FieldValue.increment(1), lastActive: FieldValue.serverTimestamp() }, { merge: true });
+                    console.log(`✅ Incremented authenticated messageCount for ${uid}`);
+                }
+                catch (error) {
+                    console.error('❌ Error updating authenticated message count:', error);
+                    // Decide if you want to proceed or throw error
+                }
+                // --- End Increment --- 
             }
+            // --- End Authenticated User Limit Check ---
         }
+        // --- End Limit Checks Combination ---
+        // App Check already enforced
+        // We already determined premium status for non-anonymous users above
+        // No need to call checkUserSubscription or checkMessageLimits again here.
         // Debug log
         console.log('💬 Processing request:', {
             userId: uid,
@@ -413,22 +443,6 @@ export const processChatMessageV2 = onCall({
             catch (error) {
                 console.error('❌ Error updating conversation:', error);
                 // Continue without saving conversation
-            }
-            // Update user's message count
-            try {
-                console.log('📝 Updating user message count in Firestore');
-                await db
-                    .collection('users')
-                    .doc(uid)
-                    .set({
-                    messageCount: FieldValue.increment(1),
-                    lastActive: FieldValue.serverTimestamp()
-                }, { merge: true });
-                console.log('✅ User message count updated successfully');
-            }
-            catch (error) {
-                console.error('❌ Error updating user message count:', error);
-                // Continue without updating message count
             }
             // Debug log
             console.log('💬 Message processed successfully');
@@ -941,6 +955,45 @@ export const sendNotificationTaskHandler = onRequest({
         res.status(500).send(`Internal Server Error: ${error.message || 'Unknown error'}`);
     }
 });
+// ---- NEW FUNCTION: Generate Custom Token for Persistent Anonymous ID ----
+export const getCustomAuthTokenForAnonymousId = onCall({
+    region: 'us-central1',
+    enforceAppCheck: true, // Enforce App Check for security
+    // No secrets needed for this function
+}, async (request) => {
+    const logPrefix = '[CUSTOM TOKEN]';
+    // --- ADD DETAILED LOGGING HERE ---
+    // console.log(`${logPrefix} Received request. Full request object:`, JSON.stringify(request, null, 2)); // <-- COMMENT THIS OUT
+    // You can also log specific parts if the above is too verbose or potentially fails:
+    console.log(`${logPrefix} Request data:`, JSON.stringify(request.data, null, 2)); // <-- UNCOMMENTED
+    console.log(`${logPrefix} Request app check token details:`, JSON.stringify(request.app, null, 2)); // <-- UNCOMMENTED
+    // --- END DETAILED LOGGING ---
+    console.log(`${logPrefix} Received request.`); // Keep original log too
+    // 1. Validate Request Data
+    const persistentId = request.data.persistentId;
+    if (!persistentId || typeof persistentId !== 'string' || persistentId.length < 36) { // Basic check (UUID length)
+        console.error(`${logPrefix} Invalid or missing persistentId in request data:`, request.data);
+        throw new HttpsError('invalid-argument', 'The function must be called with a valid persistentId string.');
+    }
+    console.log(`${logPrefix} Valid persistentId received: ${persistentId}`);
+    // 2. Generate Custom Token
+    try {
+        console.log(`${logPrefix} Generating custom token for UID: ${persistentId}`);
+        // Use the persistentId directly as the Firebase UID
+        const customToken = await getAuth().createCustomToken(persistentId);
+        console.log(`${logPrefix} Successfully generated custom token for UID: ${persistentId}`);
+        // 3. Return Token
+        return { customToken: customToken };
+    }
+    catch (error) {
+        console.error(`${logPrefix} Error generating custom token for UID ${persistentId}:`, error);
+        // Map common errors to HttpsError if needed, otherwise throw internal
+        if (error.code === 'auth/invalid-argument') {
+            throw new HttpsError('invalid-argument', 'The provided persistentId is invalid for Firebase Auth.');
+        }
+        throw new HttpsError('internal', `Failed to create custom token: ${error.message || 'Unknown error'}`);
+    }
+});
 // --- Helper Function to Delete Collections Recursively --- 
 async function deleteCollection(collectionRef, batchSize = 100) {
     const query = collectionRef.limit(batchSize);
@@ -989,13 +1042,20 @@ export const deleteAccountAndData = onCall({
 }, async (request) => {
     const logPrefix = '[ACCOUNT DELETE]';
     console.log(`${logPrefix} Received request.`);
-    // 1. Check Authentication
+    // 1. Check Authentication AND Provider
     if (!request.auth) {
         console.error(`${logPrefix} User not authenticated.`);
         throw new HttpsError('unauthenticated', 'User must be authenticated to delete account.');
     }
     const uid = request.auth.uid;
-    console.log(`${logPrefix} Authenticated user: ${uid}`);
+    const signInProvider = request.auth.token.firebase?.sign_in_provider;
+    console.log(`${logPrefix} Authenticated user: ${uid}, Provider: ${signInProvider || 'unknown'}`);
+    // --- Add check for anonymous user --- 
+    if (signInProvider === 'anonymous') {
+        console.error(`${logPrefix} Anonymous user (${uid}) attempted account deletion. Denying.`);
+        throw new HttpsError('permission-denied', 'Anonymous users cannot delete accounts. Please sign in with Google or Apple first.');
+    }
+    // --- End anonymous check --- 
     try {
         // Start a Firestore transaction for atomic operations where possible
         await db.runTransaction(async (transaction) => {

@@ -1076,6 +1076,51 @@ export const sendNotificationTaskHandler = onRequest({
     }
 });
 
+// ---- NEW FUNCTION: Generate Custom Token for Persistent Anonymous ID ----
+export const getCustomAuthTokenForAnonymousId = onCall({
+    region: 'us-central1',
+    enforceAppCheck: true, // Enforce App Check for security
+    // No secrets needed for this function
+}, async (request) => {
+    const logPrefix = '[CUSTOM TOKEN]';
+    
+    // --- ADD DETAILED LOGGING HERE ---
+    // console.log(`${logPrefix} Received request. Full request object:`, JSON.stringify(request, null, 2)); // <-- COMMENT THIS OUT
+    // You can also log specific parts if the above is too verbose or potentially fails:
+    console.log(`${logPrefix} Request data:`, JSON.stringify(request.data, null, 2)); // <-- UNCOMMENTED
+    console.log(`${logPrefix} Request app check token details:`, JSON.stringify(request.app, null, 2)); // <-- UNCOMMENTED
+    // --- END DETAILED LOGGING ---
+
+    console.log(`${logPrefix} Received request.`); // Keep original log too
+
+    // 1. Validate Request Data
+    const persistentId = request.data.persistentId;
+    if (!persistentId || typeof persistentId !== 'string' || persistentId.length < 36) { // Basic check (UUID length)
+        console.error(`${logPrefix} Invalid or missing persistentId in request data:`, request.data);
+        throw new HttpsError('invalid-argument', 'The function must be called with a valid persistentId string.');
+    }
+    console.log(`${logPrefix} Valid persistentId received: ${persistentId}`);
+
+    // 2. Generate Custom Token
+    try {
+        console.log(`${logPrefix} Generating custom token for UID: ${persistentId}`);
+        // Use the persistentId directly as the Firebase UID
+        const customToken = await getAuth().createCustomToken(persistentId);
+        console.log(`${logPrefix} Successfully generated custom token for UID: ${persistentId}`);
+
+        // 3. Return Token
+        return { customToken: customToken };
+
+    } catch (error: any) {
+        console.error(`${logPrefix} Error generating custom token for UID ${persistentId}:`, error);
+        // Map common errors to HttpsError if needed, otherwise throw internal
+        if (error.code === 'auth/invalid-argument') {
+            throw new HttpsError('invalid-argument', 'The provided persistentId is invalid for Firebase Auth.');
+        }
+        throw new HttpsError('internal', `Failed to create custom token: ${error.message || 'Unknown error'}`);
+    }
+});
+
 // --- Helper Function to Delete Collections Recursively --- 
 async function deleteCollection(collectionRef: CollectionReference, batchSize: number = 100) {
     const query = collectionRef.limit(batchSize);
@@ -1133,13 +1178,21 @@ export const deleteAccountAndData = onCall({
     const logPrefix = '[ACCOUNT DELETE]';
     console.log(`${logPrefix} Received request.`);
 
-    // 1. Check Authentication
+    // 1. Check Authentication AND Provider
     if (!request.auth) {
         console.error(`${logPrefix} User not authenticated.`);
         throw new HttpsError('unauthenticated', 'User must be authenticated to delete account.');
     }
     const uid = request.auth.uid;
-    console.log(`${logPrefix} Authenticated user: ${uid}`);
+    const signInProvider = request.auth.token.firebase?.sign_in_provider;
+    console.log(`${logPrefix} Authenticated user: ${uid}, Provider: ${signInProvider || 'unknown'}`);
+
+    // --- Add check for anonymous user --- 
+    if (signInProvider === 'anonymous') {
+        console.error(`${logPrefix} Anonymous user (${uid}) attempted account deletion. Denying.`);
+        throw new HttpsError('permission-denied', 'Anonymous users cannot delete accounts. Please sign in with Google or Apple first.');
+    }
+    // --- End anonymous check --- 
 
     try {
         // Start a Firestore transaction for atomic operations where possible
