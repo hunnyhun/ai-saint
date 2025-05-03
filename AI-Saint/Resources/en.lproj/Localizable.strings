@@ -124,3 +124,8 @@
 
 /* Anonymous Settings Button */
 "settingsButtonLabel" = "Settings"; 
+
+/* Anonymous User Limits */
+"anonymousLimitTitle" = "Usage Limit Reached";
+"signUpOrLogInButton" = "Sign Up or Log In";
+"anonymousLimitMessage" = "To continue chatting, please sign up or log in."; 

@@ -23,9 +23,6 @@ struct ChatView: View {
     // State to control AuthenticationView presentation
     @State private var showAuthSheet = false
     
-    // Note: ChatViewModel should implement isRateLimited property
-    // that gets set to true when receiving a resource-exhausted error from backend
-    
     // Debug helper
     private func debugLog(_ message: String) {
         print("[ChatView] \(message)")
@@ -84,15 +81,7 @@ struct ChatView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         // Add the new alert modifier here
-        .alert("anonymousLimitTitle".localized, isPresented: $viewModel.showAnonymousLimitAlert) {
-            Button("cancelButton".localized, role: .cancel) { }
-            Button("signUpOrLogInButton".localized) { 
-                // Set the state to show the auth sheet
-                showAuthSheet = true 
-            }
-        } message: {
-            Text("anonymousLimitMessage".localized)
-        }
+        // .alert("anonymousLimitTitle".localized, isPresented: $viewModel.showAnonymousLimitAlert) { ... }
         // Add sheet modifier to present AuthenticationView
         .sheet(isPresented: $showAuthSheet) {
             AuthenticationView()
@@ -192,9 +181,13 @@ struct ChatView: View {
                         .transition(.opacity.animation(.easeInOut(duration: 0.3)))
                     }
                     
-                    // Show premium button only when rate limit error occurs
+                    // Show prompts based on state
                     if viewModel.isRateLimited {
                         premiumButton
+                            .padding(.vertical)
+                            .transition(.scale.animation(.spring()))
+                    } else if viewModel.showAnonymousLimitPrompt {
+                        anonymousLimitPromptView
                             .padding(.vertical)
                             .transition(.scale.animation(.spring()))
                     }
@@ -232,8 +225,8 @@ struct ChatView: View {
     // MARK: - Input Area View
     private var inputArea: some View {
         VStack(spacing: 0) {
-            // Error message - show general errors ONLY if NOT rate limited
-            if let error = viewModel.error, !viewModel.isRateLimited {
+            // Error message - show general errors ONLY if NOT rate limited and not showing anonymous limit prompt
+            if let error = viewModel.error, !viewModel.isRateLimited, !viewModel.showAnonymousLimitPrompt {
                 Text(error)
                     .foregroundColor(.red)
                     .font(.footnote)
@@ -278,7 +271,7 @@ struct ChatView: View {
                 )
                 .lineLimit(1...5)
                 .focused($isTextFieldFocused)
-                .disabled(viewModel.isLoading || viewModel.isRateLimited)
+                .disabled(viewModel.isLoading || viewModel.isRateLimited || viewModel.showAnonymousLimitPrompt)
                 .submitLabel(.send)
                 .onSubmit {
                     debugLog("Submit triggered, sending message")
@@ -301,9 +294,9 @@ struct ChatView: View {
             Button(action: sendMessage) {
                 Image(systemName: messageText.isEmpty ? "circle" : "arrow.up.circle.fill")
                     .font(.system(size: 24))
-                    .foregroundColor(messageText.isEmpty || viewModel.isLoading || viewModel.isRateLimited ? .gray.opacity(0.5) : .blue)
+                    .foregroundColor(messageText.isEmpty || viewModel.isLoading || viewModel.isRateLimited || viewModel.showAnonymousLimitPrompt ? .gray.opacity(0.5) : .yellow)
             }
-            .disabled(messageText.isEmpty || viewModel.isLoading || viewModel.isRateLimited)
+            .disabled(messageText.isEmpty || viewModel.isLoading || viewModel.isRateLimited || viewModel.showAnonymousLimitPrompt)
             .padding(.trailing, 16)
             .scaleEffect(messageText.isEmpty ? 0.8 : 1.0)
             .animation(.spring(response: 0.3), value: messageText.isEmpty)
@@ -392,6 +385,53 @@ struct ChatView: View {
         // Add debug print
         .onAppear {
             print("DEBUG: Rate limit reached - showing premium button")
+        }
+    }
+    
+    // MARK: - Anonymous Limit Prompt View
+    private var anonymousLimitPromptView: some View {
+        Button(action: {
+            debugLog("Opening auth sheet due to anonymous limit")
+            showAuthSheet = true
+        }) {
+            VStack(spacing: 8) {
+                Text("anonymousLimitTitle".localized)
+                    .font(.headline)
+                    .foregroundColor(.white)
+
+                HStack {
+                    Image(systemName: "person.crop.circle.badge.plus")
+                        .font(.system(size: 20))
+                    Text("signUpOrLogInButton".localized)
+                        .font(.subheadline)
+                }
+                .foregroundColor(.white)
+
+                Text("anonymousLimitMessage".localized)
+                    .font(.caption)
+                    .foregroundColor(.white.opacity(0.8))
+                    .multilineTextAlignment(.center)
+                    .padding(.top, 2)
+
+            }
+            .padding(.vertical, 12)
+            .padding(.horizontal, 24)
+            .background(
+                LinearGradient(
+                    gradient: Gradient(colors: [
+                        Color(red: 0.9, green: 0.75, blue: 0.3),
+                        Color(red: 0.8, green: 0.6, blue: 0.2)
+                    ]),
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .cornerRadius(20)
+            .shadow(radius: 2)
+        }
+        .padding(.vertical, 8)
+        .onAppear {
+            print("DEBUG: Anonymous limit reached - showing sign up prompt")
         }
     }
     

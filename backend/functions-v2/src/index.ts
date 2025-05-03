@@ -7,6 +7,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { defineSecret } from 'firebase-functions/params';
 import { getMessaging } from 'firebase-admin/messaging';
 import { CloudTasksClient } from '@google-cloud/tasks';
+import { AuthData } from 'firebase-functions/v2/tasks'; // Import AuthData type if needed elsewhere
 
 // Define the Gemini API key secret with a different name to avoid conflicts
 const geminiSecretKey = defineSecret('GEMINI_SECRET_KEY');
@@ -55,6 +56,53 @@ interface ConversationData {
 
 // Define a limit specifically for anonymous users
 const ANONYMOUS_MESSAGE_LIMIT = 2; // Limit set to 3
+
+/**
+ * Interface for the user authentication status.
+ */
+interface UserAuthStatus {
+    uid: string;
+    isAnonymous: boolean;
+}
+
+/**
+ * Checks user authentication status for onCall functions.
+ * Verifies authentication and identifies custom anonymous users via claims.
+ *
+ * @param {AuthData | undefined} auth The auth object from the request.
+ * @throws {HttpsError('unauthenticated')} If the user is not authenticated.
+ * @returns {Promise<UserAuthStatus>} An object containing the user's UID and anonymous status.
+ */
+async function checkUserAuthentication(auth: AuthData | undefined): Promise<UserAuthStatus> {
+    const logPrefix = '[AuthCheck]';
+
+    if (!auth) {
+        console.error(`${logPrefix} User authentication data missing.`);
+        throw new HttpsError('unauthenticated', 'User must be authenticated.');
+    }
+
+    const uid = auth.uid;
+    const standardProvider = auth.token.firebase?.sign_in_provider;
+
+    // *** MODIFICATION: Only check if provider is 'custom' ***
+    const isAnonymous = standardProvider === 'custom';
+
+    // Determine provider string for logging/debugging
+    const provider = isAnonymous
+        ? 'custom_provider' // Simplified logging
+        : standardProvider || 'unknown'; // Use standard provider if known and not anon
+
+    console.log(`${logPrefix} User verified:`, {
+        userId: uid,
+        provider: provider,
+        isAnonymous: isAnonymous, // Use the calculated isAnonymous flag
+    });
+
+    return {
+        uid,
+        isAnonymous, // Return the calculated flag
+    };
+}
 
 // Check if user has premium subscription
 async function checkUserSubscription(uid: string): Promise<boolean> {
@@ -122,68 +170,124 @@ async function checkUserSubscription(uid: string): Promise<boolean> {
 }
 
 // Check message limits for free tier users
-async function checkMessageLimits(uid: string): Promise<boolean> {
+// Modified to handle both anonymous and authenticated free users
+async function checkMessageLimits(uid: string, isAnonymousUser: boolean): Promise<boolean> {
     try {
-        console.log('🔢 Checking message limits for user:', uid);
-        
         const userRef = db.collection('users').doc(uid);
         let userDoc;
-        
-        try {
-            userDoc = await userRef.get();
-        } catch (error) {
-            console.log('🔢 Error fetching user document for message limits:', error);
-            // Default to allowing access if we can't check
-            return true;
+
+        // --- Anonymous User Limit Check ---
+        if (isAnonymousUser) {
+            console.log('🕵️ [checkMessageLimits] User is anonymous. Checking message limits.');
+            let anonymousMessageCount = 0;
+            try {
+                userDoc = await userRef.get(); // Fetch user doc
+                if (userDoc.exists) {
+                    anonymousMessageCount = userDoc.data()?.anonymousMessageCount || 0;
+                }
+                console.log(`🕵️ [checkMessageLimits] Anonymous message count: ${anonymousMessageCount}/${ANONYMOUS_MESSAGE_LIMIT}`);
+
+                // *** Check against the limit ***
+                if (anonymousMessageCount >= ANONYMOUS_MESSAGE_LIMIT) {
+                    console.log('🚫 [checkMessageLimits] Anonymous user has exceeded message limit.');
+                    // *** MODIFICATION: Add details object ***
+                    throw new HttpsError(
+                        'resource-exhausted',
+                        'You have reached the message limit for anonymous access. Please sign in or sign up to continue chatting.',
+                        { limitType: 'anonymous' } // Add specific detail
+                    );
+                }
+                // If limit not reached, return true (allow message)
+                console.log('✅ [checkMessageLimits] Anonymous user is within limits.');
+                return true;
+            } catch (error) {
+                // Handle specific HttpsError re-throw
+                if (error instanceof HttpsError) {
+                    throw error; // Re-throw the specific limit error
+                }
+                // Handle other errors during fetch/check
+                console.error('❌ [checkMessageLimits] Error fetching/checking anonymous limit:', error);
+                // Decide if you want to block or allow if the check fails. Blocking is safer.
+                throw new HttpsError('internal', 'Could not verify anonymous usage limits.');
+            }
         }
-        
-        if (userDoc && userDoc.exists) {
-            const userData = userDoc.data();
-            const messageCount = userData?.messageCount || 0;
-            const messageLimit = 5; // Free tier lifetime message limit
-            
-            console.log('🔢 User lifetime message count:', messageCount, 'limit:', messageLimit);
-            
-            // Return true if user is within limits
-            return messageCount < messageLimit;
+        // --- End Anonymous User Limit Check ---
+
+        // --- Authenticated Free User Limit Check ---
+        else {
+            console.log('🔢 [checkMessageLimits] Checking authenticated free user message limits for:', uid);
+            try {
+                // Fetch user doc if not already fetched
+                if (!userDoc) {
+                    userDoc = await userRef.get();
+                }
+
+                if (userDoc && userDoc.exists) {
+                    const userData = userDoc.data();
+                    const messageCount = userData?.messageCount || 0;
+                    const messageLimit = 5; // Free tier lifetime message limit
+
+                    console.log('🔢 [checkMessageLimits] User lifetime message count:', messageCount, 'limit:', messageLimit);
+
+                    if (messageCount >= messageLimit) {
+                        console.log('🚫 [checkMessageLimits] Authenticated free user has exceeded lifetime message limit');
+                        // *** No 'details' needed here, or use a different one if preferred ***
+                        throw new HttpsError(
+                            'resource-exhausted',
+                            'You have reached the message limit for the free tier. Please upgrade to premium for unlimited messages.'
+                            // No details needed, or could add { limitType: 'authenticated_free' }
+                        );
+                    }
+                    // If limit not reached, return true
+                    console.log('✅ [checkMessageLimits] Authenticated free user is within limits.');
+                    return true;
+                }
+
+                // Default to allowing if no user document exists yet (first message)
+                console.log('🔢 [checkMessageLimits] No existing message count found, allowing first message');
+                return true; // Allow the first message which will increment the count to 1
+            } catch (error) {
+                 // Handle specific HttpsError re-throw
+                 if (error instanceof HttpsError) {
+                    throw error; // Re-throw the specific limit error
+                }
+                console.error('❌ [checkMessageLimits] Error checking authenticated free message limits:', error);
+                // Decide on behavior. Throwing an error is safer.
+                throw new HttpsError('internal', 'Could not verify authenticated usage limits.');
+            }
         }
-        
-        // Default to allowing if no user document exists yet (first message)
-        console.log('🔢 No existing message count found, allowing first message');
-        return true; // Allow the first message which will increment the count to 1
+        // --- End Authenticated Free User Limit Check ---
+
     } catch (error) {
-        console.error('❌ Error checking message limits:', error);
-        // Default to allowing access if there's an error checking
-        return true;
+         // Handle specific HttpsError re-throw from inner blocks
+         if (error instanceof HttpsError) {
+            throw error; // Re-throw the specific limit error
+        }
+        console.error('❌ [checkMessageLimits] Unexpected error:', error);
+        // Default to throwing an internal error if something unexpected happens
+        throw new HttpsError('internal', 'An unexpected error occurred while checking message limits.');
     }
 }
 
-// Chat History Function
+// Chat History Function (using new check)
 export const getChatHistoryV2 = onCall({
   region: 'us-central1',
   enforceAppCheck: true,
 }, async (request) => {
     try {
-        console.log('📱 Fetching chat history...');
-        
-        if (!request.auth) {
-             console.error('❌ Chat history requested without authentication.');
-            throw new HttpsError('unauthenticated', 'User must be authenticated.');
-        }
+        // --- Use New Authentication Check ---
+        const { uid, isAnonymous } = await checkUserAuthentication(request.auth);
+        // --- End Authentication Check ---
 
         // --- Anonymous User Check ---
-        const isAnonymous = request.auth.token.firebase?.sign_in_provider === 'anonymous';
         if (isAnonymous) {
-            console.log('🚫 Anonymous user attempted to fetch chat history. Denying access.');
-            // Return empty array or throw an error - returning empty is often better UI
-             // throw new HttpsError('permission-denied', 'Sign in to view chat history.');
-             return []; // Return empty history for anonymous users
+            console.log('🚫 [getChatHistoryV2] Anonymous user denied history access.');
+             return [];
         }
         // --- End Anonymous User Check ---
-        
-        const uid = request.auth.uid;
-        console.log('👤 Authenticated user requesting history:', { userId: uid });
-        
+
+        console.log('👤 [getChatHistoryV2] Authenticated user requesting history:', { userId: uid });
+
         try {
             console.log('🔍 Attempting to query Firestore users collection for user:', uid);
             const snapshot = await db
@@ -209,13 +313,17 @@ export const getChatHistoryV2 = onCall({
             
             return conversations;
         } catch (error) {
-            console.error('❌ Error fetching chat history:', error);
-            // Return empty array as fallback
+            console.error('❌ Error fetching chat history from Firestore:', error);
+            // Return empty array as fallback, log appropriately
             return [];
         }
     } catch (error) {
-        console.error('❌ Error fetching chat history:', error);
-        throw new Error('Failed to fetch chat history');
+         console.error('❌ Top-level error fetching chat history:', error);
+         if (error instanceof HttpsError) {
+             throw error; // Re-throw HttpsErrors (like 'unauthenticated' from middleware)
+         }
+         // Throw a different HttpsError or a generic one for client handling
+         throw new HttpsError('internal', 'Failed to fetch chat history.');
     }
 });
 
@@ -294,96 +402,47 @@ Return only the title, nothing else.`;
     }
 }
 
-// Chat Message Function
+// Chat Message Function (using new check)
 export const processChatMessageV2 = onCall({
     region: 'us-central1',
     secrets: [geminiSecretKey],
     enforceAppCheck: true,
 }, async (request) => {
     try {
-        // Debug log
-        console.log('💬 Processing chat message...');
-        
-        // Check authentication
-        if (!request.auth) {
-            throw new Error('User must be authenticated');
-        }
-        
+        // --- Use New Authentication Check ---
+        const { uid, isAnonymous: isAnonymousUser } = await checkUserAuthentication(request.auth);
+        // --- End Authentication Check ---
+
         const data = request.data;
-        
         // Validate message
-        if (!data.message) {
-            throw new Error('Message is required');
+        if (!data.message || typeof data.message !== 'string' || data.message.trim().length === 0) {
+             throw new HttpsError('invalid-argument', 'Message is required and cannot be empty.');
         }
-        
-        const { message, conversationId } = data;
-        const uid = request.auth.uid;
-        
-        const signInProvider = request.auth.token.firebase?.sign_in_provider || 'unknown';
-        const isAnonymousUser = signInProvider === 'anonymous';
+        const message = data.message.trim();
+        const conversationId = data.conversationId;
+        const userRef = db.collection('users').doc(uid); // Use uid from check
 
-        console.log('👤 User authenticated:', { 
-            userId: uid,
-            provider: signInProvider,
-            isAnonymous: isAnonymousUser,
-            email: request.auth.token.email || 'none'
-        });
+        // --- Consolidated Limit Check ---
+        const isPremium = await checkUserSubscription(uid); // Use uid from check
+        console.log('💲 User subscription status:', isPremium ? 'Premium' : 'Free/Anonymous');
 
-        // --- Anonymous User Limit Check ---
-        if (isAnonymousUser) {
-            console.log('🕵️ User is anonymous. Checking message limits.');
-            const userRef = db.collection('users').doc(uid);
-            let anonymousMessageCount = 0;
-            try {
-                const userDoc = await userRef.get();
-                if (userDoc.exists) {
-                    anonymousMessageCount = userDoc.data()?.anonymousMessageCount || 0;
-                }
-                console.log(`🕵️ Anonymous message count: ${anonymousMessageCount}/${ANONYMOUS_MESSAGE_LIMIT}`);
-
-                // *** Check against the limit ***
-                if (anonymousMessageCount >= ANONYMOUS_MESSAGE_LIMIT) {
-                    console.log('🚫 Anonymous user has exceeded message limit.');
-                    throw new HttpsError('resource-exhausted', 'You have reached the message limit for anonymous access. Please sign in or sign up to continue chatting.');
-                }
-            } catch (error) {
-                console.error('❌ Error fetching user data for anonymous limit check:', error);
-                // Decide if you want to block or allow if the check fails. Blocking is safer.
-                throw new HttpsError('internal', 'Could not verify usage limits.');
-            }
-        } else {
-            console.log('✅ User is not anonymous. Skipping anonymous limit check.');
-            // Optional: You could still apply general free-tier limits here if needed
-            // const isPremium = await checkUserSubscription(uid);
-            // if (!isPremium) { /* check free tier limits */ }
-        }
-        // --- End Anonymous User Limit Check ---
-
-        // App Check has already been enforced if you reach this point
-        // The request.app object might contain token details if needed,
-        
-        // Check if user has premium subscription
-        const isPremium = await checkUserSubscription(uid);
-        console.log('💲 User subscription status:', isPremium ? 'Premium' : 'Free');
-        
-        // If user is not premium, check message limits
         if (!isPremium) {
-            const withinLimits = await checkMessageLimits(uid);
-            if (!withinLimits) {
-                console.log('🚫 Free tier user has exceeded lifetime message limit');
-                // Throw a specific HttpsError for rate limiting
-                throw new HttpsError('resource-exhausted', 'You have reached the message limit for the free tier. Please upgrade to premium for unlimited messages.');
-            }
+             // Pass the isAnonymousUser flag from check
+            await checkMessageLimits(uid, isAnonymousUser);
+            console.log('✅ User is within message limits.');
+        } else {
+             console.log('⭐️ Premium user. Skipping limit checks.');
         }
-        
+        // --- End Consolidated Limit Check ---
+
         // Debug log
-        console.log('💬 Processing request:', {
+        console.log('💬 Proceeding with message processing:', {
             userId: uid,
             messageLength: message.length,
             conversationId: conversationId || 'new',
             subscription: isPremium ? 'Premium' : 'Free'
         });
-        
+
         // Get or create conversation
         console.log('🔍 Creating conversation reference for user:', uid);
         const conversationRef = conversationId
@@ -396,147 +455,162 @@ export const processChatMessageV2 = onCall({
                 .collection('users')
                 .doc(uid)
                 .collection('conversations')
-                .doc();
-        
-        console.log('🔍 Attempting to get conversation document:', conversationRef.path);
-        
+                .doc(); // Creates a new doc reference if conversationId is null/undefined
+
+        console.log('🔍 Conversation reference path:', conversationRef.path);
+
         // Get conversation history
         let conversationData: ConversationData = { messages: [] };
+        let existingTitle: string | undefined = undefined; // Store existing title
         try {
             const conversationDoc = await conversationRef.get();
             if (conversationDoc.exists) {
                 const data = conversationDoc.data();
-                if (data && data.messages) {
+                if (data) {
                     conversationData = data as ConversationData;
+                    existingTitle = data.title; // Get existing title if present
+                     console.log('✅ Conversation document retrieved successfully. Message count:', conversationData.messages.length);
+                } else {
+                    console.log('⚠️ Conversation document exists but has no data.');
                 }
+
+            } else {
+                 console.log('ℹ️ No existing conversation document found. Will create new one.');
             }
-            console.log('✅ Conversation document retrieved successfully');
         } catch (error) {
-            console.log('⚠️ Error retrieving conversation document:', error);
-            // Continue with empty conversation
+            console.error('❌ Error retrieving conversation document:', error);
+            // Decide if this is critical. Maybe throw an internal error?
+            // For now, continue with empty conversation, but log severity.
+            // throw new HttpsError('internal', 'Failed to retrieve conversation history.');
         }
-        
-        // Add user message
-        const userMessage = {
+
+        // Add user message to local array first
+        const userMessageEntry = {
             role: 'user',
             content: message,
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString() // Use ISO string for consistency
         };
-        
+        // Create a combined history for Gemini, including the new user message
+        const historyForGemini = [
+             ...conversationData.messages.map(msg => ({ role: msg.role, parts: [{ text: msg.content }] })),
+             { role: 'user', parts: [{ text: message }] } // Add current user message
+        ];
+
+
         // Get API key from Secret Manager
-        // Rule: Always add debug logs for easier debug
         console.log('🤖 Initializing Gemini AI with Secret Manager key...');
-        
+        let responseText = ''; // Initialize responseText
+        let title = existingTitle; // Use existing title by default
+
         try {
-            // Get the API key using the defineSecret API
             const apiKey = geminiSecretKey.value();
-            
-            // Debug logs for the API key
             if (!apiKey) {
                 console.error('❌ Gemini API key is not found');
-                throw new HttpsError('internal', 'API key not found');
+                throw new HttpsError('internal', 'API key configuration error.');
             }
-            
-            console.log('✅ Successfully retrieved API key, length:', apiKey.length);
-            
+            console.log('✅ Successfully retrieved API key.');
+
             const genAI = new GoogleGenerativeAI(apiKey);
-            // Updated model name - Using Gemini 1.5 Pro for main chat (keep this for better responses)
             const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
-            
-            // Generate response using Gemini
-            console.log('🤖 Generating response with Gemini...');
-            const result = await model.generateContent(message);
-            const response = result.response.text();
-            console.log('✅ Gemini response generated successfully');
-            
-            // Add assistant message
-            const assistantMessage = {
-                role: 'assistant',
-                content: response,
-                timestamp: new Date().toISOString()
-            };
-            
-            // Generate title for new conversations or if title is missing
-            let title: string;
-            try {
-                const existingTitle = conversationData.title;
-                if (!existingTitle || !conversationId) {
-                    console.log('📝 Generating new title for conversation');
-                    title = await generateConversationTitle(message, response);
-                } else {
-                    console.log('📝 Using existing title:', existingTitle);
-                    title = existingTitle;
-                }
-            } catch (error) {
-                console.error('❌ Error in title generation:', error);
-                title = "Spiritual Conversation";
-            }
-            
-            // Update conversation with new title
-            try {
-                console.log('📝 Updating conversation in Firestore:', {
-                    path: conversationRef.path,
-                    title: title
-                });
-                
-                const updateData = {
-                    messages: [...conversationData.messages, userMessage, assistantMessage],
-                    lastUpdated: FieldValue.serverTimestamp(),
-                    title: title
-                };
-                
-                await conversationRef.set(updateData, { merge: true });
-                console.log('✅ Conversation updated successfully with title');
-            } catch (error) {
-                console.error('❌ Error updating conversation:', error);
-                // Continue without saving conversation
-            }
-            
-            // Update user's message count
-            try {
-                console.log('📝 Updating user message count in Firestore');
-                await db
-                    .collection('users')
-                    .doc(uid)
-                    .set({
-                        messageCount: FieldValue.increment(1),
-                        lastActive: FieldValue.serverTimestamp()
-                    }, { merge: true });
-                console.log('✅ User message count updated successfully');
-            } catch (error) {
-                console.error('❌ Error updating user message count:', error);
-                // Continue without updating message count
-            }
-            
-            // Debug log
-            console.log('💬 Message processed successfully');
-            
-            return {
-                role: 'assistant',
-                message: response,
-                response: response,
-                conversationId: conversationRef.id,
-                title: title
-            };
+
+            // Start chat session with history
+            const chat = model.startChat({
+                 history: historyForGemini.slice(0, -1), // Send history *without* the latest user message
+                 generationConfig: {
+                     maxOutputTokens: 1000, // Adjust as needed
+                 },
+            });
+
+            // Send the new user message
+            console.log('🤖 Sending message to Gemini...');
+            const result = await chat.sendMessage(message); // Send only the latest message
+            responseText = result.response.text();
+            console.log('✅ Gemini response generated successfully.');
+
+            // Generate title only if it's a new conversation (no existing title)
+             if (!title) {
+                 console.log('📝 Generating new title for conversation');
+                 // Pass user message and AI response for title generation
+                 title = await generateConversationTitle(message, responseText);
+             } else {
+                 console.log('📝 Using existing title:', title);
+             }
+
         } catch (error) {
-            console.error('❌ Error with Gemini API:', error);
-            // Preserve any existing HttpsError
-            if (error instanceof HttpsError) {
-                console.log('🚫 Rethrowing HttpsError from Gemini call:', error.code, error.message);
-                throw error;
-            }
-            // For other errors, use a specific HttpsError for better client handling
-            throw new HttpsError('internal', 'Failed to generate AI response. Please try again later.');
+            console.error('❌ Error with Gemini API or Title Generation:', error);
+            // Decide how to handle Gemini failures. Send a canned response?
+             responseText = "I apologize, but I encountered an issue connecting to my knowledge base. Please try again shortly.";
+             title = existingTitle ?? "Conversation Error"; // Keep existing title or use error title
+            // Do not throw here, allow Firestore update below if possible
         }
+
+        // Prepare assistant message entry
+        const assistantMessageEntry = {
+            role: 'assistant',
+            content: responseText, // Use the generated (or error) response
+            timestamp: new Date().toISOString()
+        };
+
+
+        // --- Firestore Updates ---
+        const batch = db.batch();
+
+        // 1. Update Conversation Document
+        const conversationUpdateData = {
+            messages: [...conversationData.messages, userMessageEntry, assistantMessageEntry],
+            lastUpdated: FieldValue.serverTimestamp(),
+            title: title // Use the determined title (new or existing)
+        };
+        batch.set(conversationRef, conversationUpdateData, { merge: true });
+        console.log('🔢 Added conversation update to batch.');
+
+
+        // 2. Update User Document (Message Count / Last Active)
+        // userRef is now defined above, before the limit checks
+        const userUpdateData: { [key: string]: any } = {
+            lastActive: FieldValue.serverTimestamp()
+        };
+        // Increment the correct counter based on user type
+        if (isAnonymousUser) {
+            userUpdateData.anonymousMessageCount = FieldValue.increment(1);
+        } else {
+            userUpdateData.messageCount = FieldValue.increment(1); // Assuming this is the authenticated free counter
+        }
+        batch.set(userRef, userUpdateData, { merge: true });
+         console.log(`🔢 Added user ${isAnonymousUser ? 'anonymous' : 'authenticated'} count update to batch.`);
+
+
+        // Commit the batch
+        try {
+            console.log('💾 Committing batch update to Firestore...');
+            await batch.commit();
+            console.log('✅ Batch commit successful.');
+        } catch (error) {
+            console.error('❌ Error committing batch update:', error);
+            // If the batch fails, the message wasn't saved, and counts weren't updated.
+            // Throw an error so the client knows the operation failed.
+            throw new HttpsError('internal', 'Failed to save message and update counts.');
+        }
+        // --- End Firestore Updates ---
+
+        // Debug log
+        console.log('💬 Message processed successfully');
+
+        return {
+            role: 'assistant',
+            message: responseText, // Send the response back
+            response: responseText, // Include for compatibility if needed
+            conversationId: conversationRef.id, // Always return the ID
+            title: title // Return the final title
+        };
+
     } catch (error) {
-        console.error('❌ Error processing message:', error);
-        // Preserve HttpsError instances to keep error codes (especially for rate limiting)
+        console.error('❌ Top-level error processing message:', error);
         if (error instanceof HttpsError) {
-            console.log('🚫 Rethrowing original HttpsError:', error.code, error.message);
-            throw error;
+            throw error; // Re-throw HttpsErrors (like 'unauthenticated' or rate limits)
         }
-        // For other errors, use generic error
-        throw new Error('Failed to process message');
+        // For unexpected errors, throw a generic internal error
+        throw new HttpsError('internal', 'An unexpected error occurred while processing your message.');
     }
 });
 
@@ -1103,12 +1177,13 @@ export const getCustomAuthTokenForAnonymousId = onCall({
 
     // 2. Generate Custom Token
     try {
-        console.log(`${logPrefix} Generating custom token for UID: ${persistentId}`);
-        // Use the persistentId directly as the Firebase UID
-        const customToken = await getAuth().createCustomToken(persistentId);
-        console.log(`${logPrefix} Successfully generated custom token for UID: ${persistentId}`);
+        console.log(`${logPrefix} Generating custom token for UID: ${persistentId} with anonymous claim.`);
+        // *** MODIFICATION: Add developer claims ***
+        const additionalClaims = { is_anonymous: true };
+        const customToken = await getAuth().createCustomToken(persistentId, additionalClaims);
+        // *** END MODIFICATION ***
 
-        // 3. Return Token
+        console.log(`${logPrefix} Successfully generated custom token for UID: ${persistentId}`);
         return { customToken: customToken };
 
     } catch (error: any) {

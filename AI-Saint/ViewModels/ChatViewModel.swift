@@ -47,7 +47,7 @@ struct SectionedChatHistory {
     private var lastLoadTime: Date?
     private let loadThrottleInterval: TimeInterval = 3.0 // seconds
     private var observerSetup = false
-    var showAnonymousLimitAlert = false
+    var showAnonymousLimitPrompt = false
     var triggerAuthView = false
     
     // MARK: - Init
@@ -286,28 +286,57 @@ struct SectionedChatHistory {
             return
         }
         
-        // Check authentication status
         if let authStatus = userInfo["authStatus"] as? String,
-           let isAnonymous = userInfo["isAnonymous"] as? Bool { // Get anonymous status
-            
+           let isAnonymous = userInfo["isAnonymous"] as? Bool {
+
             print("[Chat] Handling user state change: Auth=\(authStatus), Anonymous=\(isAnonymous)")
-            
+
             if authStatus == "authenticated" && !isAnonymous {
-                // User is fully authenticated (not anonymous), load history
-                print("[Chat] User is fully authenticated. Loading history.")
-            loadChatHistory()
+                // User is fully authenticated (not anonymous)
+                print("[Chat] User is fully authenticated. Clearing state and loading history.")
+                self.messages = [] // Clear the current chat window
+                self.showAnonymousLimitPrompt = false // Reset the prompt flag
+                self.isRateLimited = false // Also reset premium limit flag
+                self.error = nil // Clear any lingering errors
+                self.currentConversation = nil // Reset current conversation reference
+                 // Generate a new conversation ID for the newly logged-in user
+                let timestamp = ISO8601DateFormatter().string(from: Date())
+                self.currentConversationId = "\(timestamp)-\(UUID().uuidString.prefix(8))"
+                print("[Chat] Generated new conversation ID for logged-in user: \(self.currentConversationId)")
+
+                // Load history (existing logic)
+                loadChatHistory()
+
+                 // Dismissal of AuthView sheet should happen implicitly in ChatView
+                 // as showAnonymousLimitPrompt is now false.
+
             } else if authStatus == "authenticated" && isAnonymous {
-                // User is anonymous, clear history and don't load
+                // User is anonymous
                 print("[Chat] User is anonymous. Clearing local history.")
                 self.chatHistory = []
-                self.sectionedHistory = [] // Clear sectioned history too
-                self.isLoadingHistory = false // Ensure loading indicator stops
+                self.sectionedHistory = []
+                self.isLoadingHistory = false
+                // self.messages = [] // Don't clear messages if starting app anonymously
+                self.showAnonymousLimitPrompt = false // Ensure prompt is hidden
+                self.isRateLimited = false
+                self.error = nil
+                self.currentConversation = nil // Reset current conversation if they were viewing one
+                // Keep existing conversation ID for anonymous session
+
             } else {
-                // User is unauthenticated, clear history
-                print("[Chat] User is unauthenticated. Clearing local history.")
+                // User is unauthenticated
+                print("[Chat] User is unauthenticated. Clearing local history and messages.")
                 self.chatHistory = []
-                self.sectionedHistory = [] // Clear sectioned history too
-                self.isLoadingHistory = false // Ensure loading indicator stops
+                self.sectionedHistory = []
+                self.isLoadingHistory = false
+                self.messages = [] // Clear messages on sign out
+                self.showAnonymousLimitPrompt = false // Ensure prompt is hidden
+                self.isRateLimited = false
+                self.error = nil
+                self.currentConversation = nil
+                 // Generate new conversation ID for logged-out state
+                let timestamp = ISO8601DateFormatter().string(from: Date())
+                 self.currentConversationId = "\(timestamp)-\(UUID().uuidString.prefix(8))"
             }
         } else {
             print("ERROR: [Chat] Invalid user state change notification data")
@@ -391,28 +420,44 @@ struct SectionedChatHistory {
                 setErrorMessage("Received empty response from server")
             }
         } catch let cloudError as CloudFunctionError {
-            // Handle Cloud Function specific errors
             switch cloudError {
             case .rateLimitExceeded(let message):
-                // Check if this is the anonymous limit message
+                print("[ChatViewModel] Received rateLimitExceeded error message: \(message)")
                 if message.localizedStandardContains("anonymous access") {
-                    print("[Chat] Anonymous rate limit exceeded")
-                    self.showAnonymousLimitAlert = true // Trigger specific alert
-                    self.isRateLimited = false // Don't show premium button
-                    self.error = nil // Clear generic error message
+                    print("[ChatViewModel] Anonymous limit identified by message content.")
+                    self.showAnonymousLimitPrompt = true
+                    self.isRateLimited = false
+                    self.error = nil
                 } else {
-                    // Assume it's the authenticated free limit
-                    print("[Chat] Authenticated free rate limit exceeded")
-                    self.isRateLimited = true // Show premium button
+                    print("[ChatViewModel] Authenticated free limit assumed (message didn't contain 'anonymous access').")
+                    self.isRateLimited = true
+                    self.showAnonymousLimitPrompt = false
                     setErrorMessage(message)
                 }
+            // Handle other CloudFunctionErrors if needed
+            // case .notAuthenticated:
+            //     print("[ChatViewModel] User not authenticated caught.")
+            //     // Handle UI for unauthenticated user, maybe trigger login?
+            //     self.error = cloudError.localizedDescription
+            //     self.isRateLimited = false
+            // case .serverError(let message):
+            //     print("[ChatViewModel] Server error caught: \(message)")
+            //     setErrorMessage(message)
+            //     self.isRateLimited = false
+            //     self.showAnonymousLimitPrompt = false
+
             default:
+                 print("[ChatViewModel] Other CloudFunctionError caught: \(cloudError.localizedDescription)")
                 setErrorMessage(cloudError.localizedDescription)
+                 self.isRateLimited = false
+                 self.showAnonymousLimitPrompt = false
             }
         } catch {
-            // Handle unexpected errors
-            let errorMessage = error.localizedDescription
-            setErrorMessage("Error: \(errorMessage)")
+            // Ensure prompts are reset for unexpected errors
+             print("[ChatViewModel] Unexpected error caught: \(error.localizedDescription)")
+            setErrorMessage("Error: \(error.localizedDescription)")
+             self.isRateLimited = false
+             self.showAnonymousLimitPrompt = false
         }
         
         // Always reset loading state
@@ -427,8 +472,8 @@ struct SectionedChatHistory {
         if let message = message {
             print("[Chat] Error: \(message)")
         }
-        // Ensure anonymous alert isn't shown for general errors
-        // self.showAnonymousLimitAlert = false // Don't reset here, let the view handle dismissal
+        // Ensure anonymous prompt isn't shown for general errors
+        // self.showAnonymousLimitPrompt = false // Don't reset here, let the view handle dismissal
     }
     
     // MARK: - Saving Conversation

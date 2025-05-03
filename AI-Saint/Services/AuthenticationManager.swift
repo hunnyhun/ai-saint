@@ -167,14 +167,25 @@ import os
     }
     
     // Sign Out
-    func signOut() throws {
+    // Modified to immediately attempt anonymous sign-in after successful sign-out
+    func signOut() async throws {
         do {
             try Auth.auth().signOut()
-            self.user = nil
-            print("DEBUG: Successfully signed out")
-        } catch {
-            print("ERROR: Sign out error: \(error.localizedDescription)")
-            throw error
+            self.user = nil // Update local state immediately
+            print("DEBUG: Successfully signed out from Firebase.")
+
+            // --- ADDED: Attempt anonymous sign-in immediately --- 
+            print("DEBUG: [AuthManager] User explicitly signed out. Attempting immediate anonymous sign-in...")
+            // No need for isLoading = true here as signInAnonymously handles it
+            try await signInAnonymously()
+             print("DEBUG: [AuthManager] Anonymous sign-in attempted after explicit sign out.")
+             // The auth state listener will pick up the new anonymous user state.
+            // --- END ADDED ---
+
+        } catch let signOutError {
+            print("ERROR: Sign out error: \(signOutError.localizedDescription)")
+            // If sign out fails, we definitely don't want to try anonymous sign in
+            throw signOutError
         }
     }
     

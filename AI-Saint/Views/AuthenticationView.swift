@@ -247,76 +247,71 @@ struct AuthenticationView: View {
                         }
                         .opacity(isLoading ? 0.6 : 1.0)
                         .animation(.easeInOut(duration: 0.2), value: isLoading)
-                        
-                        // Fixed space for loading indicator
-                        ZStack {
-                            if isLoading {
-                                ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                    .scaleEffect(1.5)
-                                    .transition(.opacity)
-                            }
-                        }
-                        .frame(height: 44) // Fixed height for the loading indicator space
-                        .animation(.easeInOut(duration: 0.3), value: isLoading)
                     }
                     .padding(.horizontal, 30)
                     .padding(.bottom, 50)
-                    .disabled(isLoading)
                 }
-            }
-            .onChange(of: authManager.isAuthenticated) { _, isAuthenticated in
-                if isAuthenticated {
-                    // Print debug message to track this event
-                    print("📱 [AuthView] User authenticated, dismissing view")
-                    
-                    // Simply dismiss this view without showing notification prompt
-                    dismiss()
-                    
-                    // Don't show notification alert here - it's handled in ContentView
+                
+                // --- ADD Loading Overlay --- 
+                if isLoading {
+                    ZStack {
+                        // Semi-transparent background
+                        Color.black.opacity(0.4)
+                            .ignoresSafeArea()
+                            .transition(.opacity) // Fade in/out
+                        
+                        // Centered ProgressView
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            .scaleEffect(2.0) // Make it larger
+                    }
+                    .animation(.easeInOut(duration: 0.3), value: isLoading) // Animate the overlay
                 }
+                // --- END Loading Overlay ---
             }
         }
     }
     
     // MARK: - Actions
     private func handleGoogleSignIn() {
-        isLoading = true
-        print("DEBUG: [AuthView] Attempting Google sign in")
-        
         Task {
+            isLoading = true
+            errorMessage = nil
             do {
+                // Attempt Google Sign In
+                print("DEBUG: [AuthView] Attempting Google sign in")
                 try await authManager.signInWithGoogle()
+                
+                // Check if notification permission is needed (optional, can be moved)
+                // await checkAndRequestNotificationPermission()
+                
                 print("DEBUG: [AuthView] Google sign in successful")
+                dismiss()
             } catch {
-                // Only show error if it's not a cancellation
-                if !isCancellationError(error) {
-                    errorMessage = error.localizedDescription
-                    print("ERROR: [AuthView] Google sign in failed: \(error.localizedDescription)")
-                } else {
-                    print("INFO: [AuthView] Google sign in was cancelled by user")
-                }
+                print("ERROR: [AuthView] Google Sign In Failed: \(error.localizedDescription)")
+                errorMessage = error.localizedDescription // Show error message
             }
             isLoading = false
         }
     }
     
     private func handleAppleSignIn() {
-        isLoading = true
-        print("DEBUG: [AuthView] Attempting Apple sign in")
-        
         Task {
+            isLoading = true
+            errorMessage = nil
             do {
+                // Attempt Apple Sign In
+                print("DEBUG: [AuthView] Attempting Apple sign in")
                 try await authManager.signInWithApple()
+                
+                // Check if notification permission is needed (optional, can be moved)
+                // await checkAndRequestNotificationPermission()
+                
                 print("DEBUG: [AuthView] Apple sign in successful")
+                dismiss()
             } catch {
-                // Only show error if it's not a cancellation
-                if !isCancellationError(error) {
-                    errorMessage = error.localizedDescription
-                    print("ERROR: [AuthView] Apple sign in failed: \(error.localizedDescription)")
-                } else {
-                    print("INFO: [AuthView] Apple sign in was cancelled by user")
-                }
+                print("ERROR: [AuthView] Apple Sign In Failed: \(error.localizedDescription)")
+                errorMessage = error.localizedDescription // Show error message
             }
             isLoading = false
         }

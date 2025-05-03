@@ -11,7 +11,7 @@ enum CloudFunctionError: Error {
     case serverError(String)
     case parseError
     case networkError(Error)
-    case rateLimitExceeded(String)
+    case rateLimitExceeded(message: String)
     
     var localizedDescription: String {
         switch self {
@@ -85,38 +85,45 @@ enum CloudFunctionError: Error {
             // Debug log
             print("🌩️ Successfully fetched chat history with \(conversations.count) conversations")
             return conversations
-        } catch let error as CloudFunctionError {
-            // Re-throw our custom errors
-            print("🌩️ Error getting chat history: \(error.localizedDescription)")
-            throw error
         } catch {
             // Handle all other errors
             print("🌩️ Function error detail: \(error)")
-            
-            // Check if it's a Firebase Functions error
+
             let nsError = error as NSError
             if nsError.domain == FunctionsErrorDomain { // Use FunctionsErrorDomain constant
                 // Check the specific error code
                 if let code = FunctionsErrorCode(rawValue: nsError.code) {
+                     // Extract the message description provided by the SDK
+                     let errorMessage = nsError.userInfo[NSLocalizedDescriptionKey] as? String ?? nsError.localizedDescription
+
                     switch code {
                     case .resourceExhausted:
-                        // Extract the message from details if possible, otherwise use default
-                        let message = (nsError.userInfo[FunctionsErrorDetailsKey] as? String) ?? "Rate limit exceeded."
-                        print("🌩️ Rate limit exceeded: \(message)")
-                        throw CloudFunctionError.rateLimitExceeded(message)
+                         print("🌩️ [getChatHistory] Resource exhausted error detected. Message: \(errorMessage)")
+                         // Throw the single rate limit error with the message we received
+                         throw CloudFunctionError.rateLimitExceeded(message: errorMessage)
+
+                    case .unauthenticated:
+                         print("🌩️ [getChatHistory] Unauthenticated error from Functions")
+                         throw CloudFunctionError.notAuthenticated // Map to your custom error
+
+                    // Handle other specific codes if necessary
+                    // case .invalidArgument:
+                    //     print("🌩️ [getChatHistory] Invalid argument error: \(errorMessage)")
+                    //     throw CloudFunctionError.serverError("Invalid request data: \(errorMessage)")
+
                     default:
                         // Handle other Firebase function errors
-                        print("🌩️ Firebase Functions server error: \(nsError.localizedDescription)")
-                        throw CloudFunctionError.serverError(nsError.localizedDescription)
+                        print("🌩️ [getChatHistory] Firebase Functions server error (\(code.rawValue)): \(errorMessage)")
+                        throw CloudFunctionError.serverError(errorMessage)
                     }
                 } else {
                     // Fallback for unknown Firebase function errors
-                    print("🌩️ Unknown Firebase Functions error code: \(nsError.code)")
+                     print("🌩️ [getChatHistory] Unknown Firebase Functions error code: \(nsError.code)")
                     throw CloudFunctionError.serverError(nsError.localizedDescription)
                 }
             } else {
                 // Handle non-Firebase network errors
-                print("🌩️ Network error: \(error.localizedDescription)")
+                 print("🌩️ [getChatHistory] Network error: \(error.localizedDescription)")
                 throw CloudFunctionError.networkError(error)
             }
         }
@@ -167,42 +174,46 @@ enum CloudFunctionError: Error {
             // Debug log
             print("🌩️ Successfully received response: \(responseData)")
             return responseData
-        } catch let error as CloudFunctionError {
-            // Re-throw our custom errors
-            print("🌩️ Error sending message: \(error.localizedDescription)")
-            throw error
         } catch {
             // Handle all other errors - add more detailed logging
-            print("🌩️ Function error detail: \(error)")
-            
+             print("🌩️ Function error detail: \(error)") // Keep this log
+
             // Check if it's a Firebase Functions error
             let nsError = error as NSError
             if nsError.domain == FunctionsErrorDomain { // Use FunctionsErrorDomain constant
                 // Check the specific error code
                 if let code = FunctionsErrorCode(rawValue: nsError.code) {
+                     // Extract the message description provided by the SDK
+                     let errorMessage = nsError.userInfo[NSLocalizedDescriptionKey] as? String ?? nsError.localizedDescription
+
                     switch code {
                     case .resourceExhausted:
-                        // Extract the message from details if possible, otherwise use default
-                        let message = (nsError.userInfo[FunctionsErrorDetailsKey] as? String) ?? "Rate limit exceeded."
-                        print("🌩️ Rate limit exceeded: \(message)")
-                        throw CloudFunctionError.rateLimitExceeded(message)
-                    // Add other specific codes if needed, e.g.:
-                    // case .unauthenticated:
-                    //    print("🌩️ Unauthenticated error from Functions")
-                    //    throw CloudFunctionError.notAuthenticated
+                         print("🌩️ [sendMessage] Resource exhausted error detected. Message: \(errorMessage)")
+                         // Throw the single rate limit error with the message we received
+                         throw CloudFunctionError.rateLimitExceeded(message: errorMessage)
+
+                     case .unauthenticated:
+                        print("🌩️ [sendMessage] Unauthenticated error from Functions")
+                        throw CloudFunctionError.notAuthenticated // Map to your custom error
+
+                    // Handle other specific codes if necessary
+                    // case .invalidArgument:
+                    //     print("🌩️ [sendMessage] Invalid argument error: \(errorMessage)")
+                    //     throw CloudFunctionError.serverError("Invalid request data: \(errorMessage)")
+
                     default:
                         // Handle other Firebase function errors
-                        print("🌩️ Firebase Functions server error: \(nsError.localizedDescription)")
-                        throw CloudFunctionError.serverError(nsError.localizedDescription)
+                        print("🌩️ [sendMessage] Firebase Functions server error (\(code.rawValue)): \(errorMessage)")
+                        throw CloudFunctionError.serverError(errorMessage)
                     }
                 } else {
                     // Fallback for unknown Firebase function errors
-                    print("🌩️ Unknown Firebase Functions error code: \(nsError.code)")
+                     print("🌩️ [sendMessage] Unknown Firebase Functions error code: \(nsError.code)")
                     throw CloudFunctionError.serverError(nsError.localizedDescription)
                 }
             } else {
                 // Handle non-Firebase network errors
-                print("🌩️ Network error: \(error.localizedDescription)")
+                 print("🌩️ [sendMessage] Network error: \(error.localizedDescription)")
                 throw CloudFunctionError.networkError(error)
             }
         }

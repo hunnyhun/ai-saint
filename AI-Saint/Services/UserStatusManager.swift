@@ -241,7 +241,7 @@ enum AppFeature {
     func signOut() async throws {
         // Debug log
         print("🔑 Signing out user")
-        try authManager.signOut()
+        try await authManager.signOut()
     }
     
     func deleteAccount() async throws {
@@ -252,7 +252,7 @@ enum AppFeature {
         try await cloudFunctionService.deleteAccountAndData()
 
         // Then sign out using auth manager
-        try authManager.signOut()
+        try await authManager.signOut()
 
         // Clear the persistent anonymous user ID from Keychain (if it exists)
         do {

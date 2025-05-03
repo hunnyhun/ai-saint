@@ -123,4 +123,9 @@
 "continueWithApple" = "Continuar con Apple";
 
 /* Anonymous Settings Button */
-"settingsButtonLabel" = "Configuración"; 
+"settingsButtonLabel" = "Configuración";
+
+/* Anonymous User Limits */
+"anonymousLimitTitle" = "Límite de Uso Alcanzado";
+"signUpOrLogInButton" = "Regístrate o Inicia Sesión";
+"anonymousLimitMessage" = "Para continuar chateando, por favor regístrate o inicia sesión."; 

@@ -15,6 +15,7 @@ struct SettingsView: View {
     @State private var showingDeleteConfirm = false
     @State private var isDeleting = false
     @State private var deleteError: String?
+    @State private var isSigningOut = false
     
     // Environment objects
     let userStatusManager = UserStatusManager.shared
@@ -109,8 +110,12 @@ struct SettingsView: View {
                     Section {
                         Button(role: .destructive) {
                             Task {
+                                isSigningOut = true
+                                defer { isSigningOut = false }
                                 do {
+                                    print("🔑 [SettingsView] Starting sign out...")
                                     try await userStatusManager.signOut()
+                                    print("🔑 [SettingsView] Sign out successful, dismissing view.")
                                     dismiss()
                                 } catch {
                                     print("ERROR: Sign out failed: \(error.localizedDescription)")
@@ -118,11 +123,19 @@ struct SettingsView: View {
                             }
                         } label: {
                             HStack {
-                                Image(systemName: "rectangle.portrait.and.arrow.right")
-                                Text("signOut".localized)
+                                if isSigningOut {
+                                    ProgressView()
+                                        .progressViewStyle(.circular)
+                                        .frame(width: 20, height: 20)
+                                    Text("Signing Out...")
+                                } else {
+                                    Image(systemName: "rectangle.portrait.and.arrow.right")
+                                    Text("signOut".localized)
+                                }
                                 Spacer()
                             }
                         }
+                        .disabled(isSigningOut)
                     }
                 }
                 
