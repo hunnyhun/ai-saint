@@ -160,10 +160,10 @@ enum AppFeature {
                     }
                 }
                 
-                // Update subscription state
+                // Update subscription state using the unified "Premium" entitlement
                 let customerInfo = try await Purchases.shared.customerInfo()
-                let isPremium = customerInfo.entitlements["Monthly Premium"]?.isActive == true || 
-                                customerInfo.activeSubscriptions.contains("com.hunyhun.aisaint.premium.monthly")
+                let isPremium = customerInfo.entitlements["Premium"]?.isActive == true || 
+                                !customerInfo.activeSubscriptions.isEmpty // Check for *any* active sub as backup
                 let wasSubscribed = state.subscriptionTier == .premium
                 state.subscriptionTier = isPremium ? .premium : .free
                 if isPremium != wasSubscribed {

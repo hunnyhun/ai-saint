@@ -80,7 +80,8 @@ import FirebaseAuth
             let customerInfo = try await Purchases.shared.customerInfo()
             print("DEBUG: [SubscriptionManager] Got customer info - Entitlements: \(customerInfo.entitlements.all)")
             
-            let isPremium = customerInfo.entitlements["Monthly Premium"]?.isActive == true
+            // Check for the unified "Premium" entitlement
+            let isPremium = customerInfo.entitlements["Premium"]?.isActive == true 
             currentSubscription = isPremium ? .premium : .free
             
             print("DEBUG: [SubscriptionManager] Updated subscription tier: \(currentSubscription.rawValue), isPremium: \(isPremium)")
@@ -150,9 +151,11 @@ import FirebaseAuth
                 AnalyticsParameterPrice: package.storeProduct.price
             ])
             
-            // Update subscription status
-            let hasPremiumEntitlement = result.customerInfo.entitlements["Monthly Premium"]?.isActive == true
-            let hasActiveSubscription = result.customerInfo.activeSubscriptions.contains("com.hunyhun.aisaint.premium.monthly")
+            // Update subscription status using the unified "Premium" entitlement
+            let hasPremiumEntitlement = result.customerInfo.entitlements["Premium"]?.isActive == true
+            
+            // Also check active subscriptions for safety (though entitlement should be enough)
+            let hasActiveSubscription = !result.customerInfo.activeSubscriptions.isEmpty // Check if *any* sub is active
             let isPremium = hasPremiumEntitlement || hasActiveSubscription
             
             currentSubscription = isPremium ? .premium : .free
@@ -199,8 +202,8 @@ import FirebaseAuth
             let customerInfo = try await Purchases.shared.restorePurchases()
             print("DEBUG: [SubscriptionManager] After restore - AppUserID: \(customerInfo.originalAppUserId), Entitlements: \(customerInfo.entitlements.all)")
 
-            // Check if restore was successful by looking for active entitlements
-            let isPremiumActive = customerInfo.entitlements["Monthly Premium"]?.isActive == true
+            // Check if restore was successful by looking for the unified "Premium" entitlement
+            let isPremiumActive = customerInfo.entitlements["Premium"]?.isActive == true
             let restoredAppUserID = customerInfo.originalAppUserId // Use originalAppUserId which should be stable
             
             print("DEBUG: [SubscriptionManager] Restore check: isPremiumActive=\(isPremiumActive), restoredAppUserID=\(restoredAppUserID), currentFirebaseUID=\(firebaseUserID)")
@@ -220,7 +223,7 @@ import FirebaseAuth
                      // throw SubscriptionError.restoreMismatch 
                 }
             } else {
-                 print("DEBUG: [SubscriptionManager] No active 'Monthly Premium' entitlement found after restore.")
+                 print("DEBUG: [SubscriptionManager] No active 'Premium' entitlement found after restore.")
                  currentSubscription = .free
             }
 
