@@ -23,6 +23,10 @@ struct ChatView: View {
     // State to control AuthenticationView presentation
     @State private var showAuthSheet = false
     
+    // --- Add character limit constant ---
+    let frontendCharLimit = 1000
+    // ---------------------------------
+    
     // Debug helper
     private func debugLog(_ message: String) {
         print("[ChatView] \(message)")
@@ -242,6 +246,18 @@ struct ChatView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 16)
             .padding(.bottom, 8) // Add bottom padding for spacing
+            
+            // --- Add Character Count (Conditional) ---
+            if messageText.count > 700 { // Only show after 700 characters
+                Text("\(messageText.count) / \(frontendCharLimit)")
+                     .font(.caption)
+                     .foregroundColor(messageText.count > frontendCharLimit ? .red : .gray)
+                     .frame(maxWidth: .infinity, alignment: .trailing)
+                     .padding(.horizontal, 12) // Align roughly with TextField end
+                     .padding(.bottom, 6) // Space below input area
+                     .transition(.opacity.animation(.easeInOut(duration: 0.2))) // Add animation
+            }
+            // --- End Character Count ---
         }
         .background(Color.white)
         .clipShape(RoundedCorners(tl: 24, tr: 24, bl: 0, br: 0))
@@ -281,6 +297,15 @@ struct ChatView: View {
                     if isLoading {
                         debugLog("Loading started, dismissing keyboard")
                         isTextFieldFocused = false
+                    }
+                }
+                .onChange(of: messageText) { _, newValue in
+                    // Use the constant here
+                    if newValue.count > frontendCharLimit {
+                        // Use DispatchQueue to avoid modifying state during view update cycle warning
+                        DispatchQueue.main.async {
+                             messageText = String(newValue.prefix(frontendCharLimit))
+                        }
                     }
                 }
                 .onChange(of: isTextFieldFocused) { _, focused in

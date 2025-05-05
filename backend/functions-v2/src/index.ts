@@ -43,6 +43,11 @@ const parent = tasksClient.queuePath(project || '', location, queue);
 
 console.log('✅ Cloud Tasks Client initialized for queue:', parent);
 
+// --- Rate Limiting Constants ---
+const IP_RATE_LIMIT_WINDOW_SECONDS = 60; // 1 minute
+const IP_RATE_LIMIT_MAX_REQUESTS = 30; // Max requests per window per IP
+// -----------------------------
+
 // Define conversation data interface for type safety
 interface ConversationData {
   messages: Array<{
@@ -106,65 +111,92 @@ async function checkUserAuthentication(auth: AuthData | undefined): Promise<User
 
 // Check if user has premium subscription
 async function checkUserSubscription(uid: string): Promise<boolean> {
+    const logPrefix = '[SubscriptionCheck]';
     try {
-        // Debug log
-        console.log('💲 Checking subscription status for user:', uid);
-        
-        // First check RevenueCat customers collection
+        console.log(`${logPrefix} Checking subscription status for user:`, uid);
+
         const revenueCatCustomerRef = db.collection('customers').doc(uid);
-        let revenueCatData;
-        
+        let customerDoc;
+
         try {
-            revenueCatData = await revenueCatCustomerRef.get();
-        } catch (error) {
-            console.log('💲 Error fetching RevenueCat data:', error);
-            // Continue with fallback checks
-        }
-        
-        if (revenueCatData && revenueCatData.exists) {
-            const customerData = revenueCatData.data();
-            console.log('💲 RevenueCat customer data found:', customerData);
-            
-            // Check if customer has active premium entitlement
-            if (customerData?.subscriptions && 
-                customerData.subscriptions['com.hunyhun.aisaint.premium.monthly']?.entitlements?.['Monthly Premium']?.active === true) {
-                console.log('💲 User has active premium subscription via RevenueCat data');
-                return true;
+            customerDoc = await revenueCatCustomerRef.get();
+            if (!customerDoc.exists) {
+                console.log(`${logPrefix} No RevenueCat customer document found for user ${uid}. Assuming free.`);
+                return false; // No customer document means not premium
             }
-        } else {
-            console.log('💲 No RevenueCat customer data found, checking user document');
-        }
-        
-        // If no RevenueCat data or not premium, check user document as fallback
-        const userDocRef = db.collection('users').doc(uid);
-        let userDoc;
-        
-        try {
-            userDoc = await userDocRef.get();
         } catch (error) {
-            console.log('💲 Error fetching user document:', error);
-            // Default to free tier if we can't check
+            console.error(`${logPrefix} Error fetching RevenueCat data for user ${uid}:`, error);
+            // If we can't fetch the official subscription data, assume free for safety
+            return false; 
+        }
+
+        const customerData = customerDoc.data();
+        console.log(`${logPrefix} RevenueCat customer data found for user ${uid}.`); // Simplified log
+
+        // --- Check Subscriptions Map Directly --- 
+        if (!customerData?.subscriptions) {
+            console.log(`${logPrefix} No 'subscriptions' map found in customer data. Assuming free.`);
             return false;
         }
-        
-        if (userDoc && userDoc.exists) {
-            const userData = userDoc.data();
-            console.log('💲 User document data:', userData);
-            
-            // Check for premium status flag in user data
-            if (userData?.isPremium === true || userData?.subscriptionTier === 'premium') {
-                console.log('💲 User has premium status via user document');
-                return true;
+
+        const subscriptions = customerData.subscriptions;
+        const now = new Date();
+
+        // Define your product IDs (ensure these are correct!)
+        const monthlyProductId = 'com.hunnyhun.aisaint.premium.monthly';
+        const yearlyProductId = 'com.hunnyhun.aisaint.premium.yearly'; // <-- VERIFY THIS ID
+
+        // Check monthly subscription
+        const monthlySub = subscriptions[monthlyProductId];
+        if (monthlySub) {
+            console.log(`${logPrefix} Found monthly subscription entry.`);
+            if (monthlySub.expires_date) {
+                try {
+                    const expiryDate = new Date(monthlySub.expires_date);
+                    if (expiryDate > now) {
+                        console.log(`${logPrefix} Monthly subscription is active (expires: ${monthlySub.expires_date}). User is Premium.`);
+                        return true;
+                    }
+                     console.log(`${logPrefix} Monthly subscription expired (${monthlySub.expires_date}).`);
+                } catch (dateError) {
+                    console.error(`${logPrefix} Error parsing monthly expiry date '${monthlySub.expires_date}':`, dateError);
+                }
+            } else {
+                console.log(`${logPrefix} Monthly subscription entry has no expiry date.`);
             }
         } else {
-            console.log('💲 No user document found');
+             console.log(`${logPrefix} No monthly subscription entry found.`);
         }
-        
-        console.log('💲 User does not have premium subscription');
+
+        // Check yearly subscription
+        const yearlySub = subscriptions[yearlyProductId];
+        if (yearlySub) {
+            console.log(`${logPrefix} Found yearly subscription entry.`);
+            if (yearlySub.expires_date) {
+                try {
+                    const expiryDate = new Date(yearlySub.expires_date);
+                    if (expiryDate > now) {
+                        console.log(`${logPrefix} Yearly subscription is active (expires: ${yearlySub.expires_date}). User is Premium.`);
+                        return true;
+                    }
+                    console.log(`${logPrefix} Yearly subscription expired (${yearlySub.expires_date}).`);
+                } catch (dateError) {
+                    console.error(`${logPrefix} Error parsing yearly expiry date '${yearlySub.expires_date}':`, dateError);
+                }
+            } else {
+                console.log(`${logPrefix} Yearly subscription entry has no expiry date.`);
+            }
+        } else {
+             console.log(`${logPrefix} No yearly subscription entry found.`);
+        }
+
+        // If neither active subscription was found
+        console.log(`${logPrefix} No active monthly or yearly subscription found based on expiry dates. User is Free.`);
         return false;
+
     } catch (error) {
-        console.error('❌ Error checking subscription status:', error);
-        // Default to allowing access if there's an error checking
+        console.error(`${logPrefix} Unexpected error during subscription check for user ${uid}:`, error);
+        // Default to free (false) if any unexpected error occurs during the process
         return false;
     }
 }
@@ -409,6 +441,16 @@ export const processChatMessageV2 = onCall({
     enforceAppCheck: true,
 }, async (request) => {
     try {
+        // --- Add IP Rate Limiting Check --- 
+        const clientIp = request.rawRequest.ip;
+        if (clientIp) { // Only check if IP exists
+             await checkAndIncrementIpRateLimit(clientIp);
+        } else {
+            console.warn('[processChatMessageV2] Client IP address not found in request. Cannot apply rate limit.');
+            // Decide if you want to throw an error or allow requests without IP
+        }
+        // --- End IP Rate Limiting Check ---
+
         // --- Use New Authentication Check ---
         const { uid, isAnonymous: isAnonymousUser } = await checkUserAuthentication(request.auth);
         // --- End Authentication Check ---
@@ -418,7 +460,15 @@ export const processChatMessageV2 = onCall({
         if (!data.message || typeof data.message !== 'string' || data.message.trim().length === 0) {
              throw new HttpsError('invalid-argument', 'Message is required and cannot be empty.');
         }
-        const message = data.message.trim();
+        // --- Add Backend Character Limit --- 
+        let message = data.message.trim(); // Use let to allow modification
+        const MAX_BACKEND_CHARS = 1000;
+        if (message.length > MAX_BACKEND_CHARS) {
+            console.warn(`[InputLimit] Message length (${message.length}) exceeds backend limit (${MAX_BACKEND_CHARS}). Truncating.`);
+            message = message.substring(0, MAX_BACKEND_CHARS);
+        }
+        // --- End Backend Character Limit ---
+
         const conversationId = data.conversationId;
         const userRef = db.collection('users').doc(uid); // Use uid from check
 
@@ -426,14 +476,54 @@ export const processChatMessageV2 = onCall({
         const isPremium = await checkUserSubscription(uid); // Use uid from check
         console.log('💲 User subscription status:', isPremium ? 'Premium' : 'Free/Anonymous');
 
+        let applyPremiumDelay = false; // Flag to indicate if delay should be applied
+        let premiumDailyCount = 0;
+        const todaysDateStr = new Date().toISOString().split('T')[0]; // UTC date string YYYY-MM-DD
+
         if (!isPremium) {
              // Pass the isAnonymousUser flag from check
             await checkMessageLimits(uid, isAnonymousUser);
             console.log('✅ User is within message limits.');
         } else {
-             console.log('⭐️ Premium user. Skipping limit checks.');
+             console.log('⭐️ Premium user. Checking daily chat limits for potential slowdown.');
+             // --- Premium User Daily Limit Check --- 
+             try {
+                const userDoc = await userRef.get();
+                const userData = userDoc.data() || {};
+                const countDate = userData.premiumChatCountDate; // String 'YYYY-MM-DD'
+                let currentCount = userData.premiumChatDailyCount || 0;
+
+                if (countDate !== todaysDateStr) {
+                    console.log(`[PremiumLimit] Date mismatch (${countDate} vs ${todaysDateStr}). Resetting daily count for user ${uid}.`);
+                    currentCount = 0; // Reset count if date is different
+                }
+
+                premiumDailyCount = currentCount; // Store count *before* incrementing
+
+                // Check if the limit was ALREADY met or exceeded before this call
+                if (premiumDailyCount >= 100) { // 100 calls limit
+                    console.warn(`[PremiumLimit] Daily limit (${premiumDailyCount}/100) reached for premium user ${uid}. Applying slowdown.`);
+                    applyPremiumDelay = true;
+                } else {
+                     console.log(`[PremiumLimit] Premium user ${uid} within daily limit (${premiumDailyCount}/100).`);
+                }
+                // We will increment the count later in the batch update
+
+             } catch (limitCheckError) {
+                 console.error(`[PremiumLimit] Error checking premium daily limit for ${uid}:`, limitCheckError);
+                 // Proceed without delay if limit check fails, but log it
+             }
+             // --- End Premium User Daily Limit Check ---
         }
         // --- End Consolidated Limit Check ---
+
+        // --- Apply Delay if Necessary --- 
+        if (applyPremiumDelay) {
+            const delayMs = 5000; // 2 second delay
+            console.log(`[PremiumLimit] Applying ${delayMs}ms delay for user ${uid}.`);
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
+        // --- End Apply Delay ---
 
         // Debug log
         console.log('💬 Proceeding with message processing:', {
@@ -573,11 +663,15 @@ export const processChatMessageV2 = onCall({
         // Increment the correct counter based on user type
         if (isAnonymousUser) {
             userUpdateData.anonymousMessageCount = FieldValue.increment(1);
+        } else if (!isPremium) { // Only increment free counter if actually free
+            userUpdateData.messageCount = FieldValue.increment(1); 
         } else {
-            userUpdateData.messageCount = FieldValue.increment(1); // Assuming this is the authenticated free counter
+             // For premium users, update their specific daily counter
+             userUpdateData.premiumChatDailyCount = FieldValue.increment(1);
+             userUpdateData.premiumChatCountDate = todaysDateStr;
         }
         batch.set(userRef, userUpdateData, { merge: true });
-         console.log(`🔢 Added user ${isAnonymousUser ? 'anonymous' : 'authenticated'} count update to batch.`);
+         console.log(`🔢 Added user count/status update to batch.`);
 
 
         // Commit the batch
@@ -753,6 +847,25 @@ export const scheduleDailyQuoteTasks = onSchedule({
             const userData = userDoc.data() || {};
 
             try {
+                // --- Add check for Anonymous User --- 
+                try {
+                    const userRecord = await auth.getUser(userId);
+                    // Skip users with no linked standard providers (likely custom anonymous)
+                    if (userRecord.providerData.length === 0) {
+                        console.log(`[TASK SCHEDULER] Skipping user ${userId} - Likely anonymous (no providers linked).`);
+                        continue; // Skip to the next user
+                    }
+                } catch (authError: any) {
+                    // Handle cases where the user might not exist in Auth (e.g., cleanup issues)
+                    if (authError.code === 'auth/user-not-found') {
+                        console.warn(`[TASK SCHEDULER] User ${userId} not found in Firebase Auth. Skipping.`);
+                    } else {
+                        console.error(`[TASK SCHEDULER] Error fetching auth record for user ${userId}:`, authError);
+                    }
+                    continue; // Skip user if auth check fails
+                }
+                // --- End Anonymous User Check ---
+
                 // Check subscription & Limits (only if scheduling needed)
                 const isPremium = await checkUserSubscription(userId);
                 const dailyQuoteCount = userData.dailyQuoteCount || 0;
@@ -1157,14 +1270,19 @@ export const getCustomAuthTokenForAnonymousId = onCall({
     // No secrets needed for this function
 }, async (request) => {
     const logPrefix = '[CUSTOM TOKEN]';
-    
+
+    // --- Add IP Rate Limiting Check --- 
+    const clientIp = request.rawRequest.ip;
+    if (clientIp) { // Only check if IP exists
+         await checkAndIncrementIpRateLimit(clientIp);
+    } else {
+        console.warn(`${logPrefix} Client IP address not found in request. Cannot apply rate limit.`);
+        // Decide if you want to throw an error or allow requests without IP
+    }
+    // --- End IP Rate Limiting Check ---
+
     // --- ADD DETAILED LOGGING HERE ---
     // console.log(`${logPrefix} Received request. Full request object:`, JSON.stringify(request, null, 2)); // <-- COMMENT THIS OUT
-    // You can also log specific parts if the above is too verbose or potentially fails:
-    console.log(`${logPrefix} Request data:`, JSON.stringify(request.data, null, 2)); // <-- UNCOMMENTED
-    console.log(`${logPrefix} Request app check token details:`, JSON.stringify(request.app, null, 2)); // <-- UNCOMMENTED
-    // --- END DETAILED LOGGING ---
-
     console.log(`${logPrefix} Received request.`); // Keep original log too
 
     // 1. Validate Request Data
@@ -1398,3 +1516,81 @@ export const deleteAccountAndData = onCall({
         throw new HttpsError('internal', `Failed to delete account: ${error.message || 'Unknown error'}`);
     }
 });
+
+// --- Helper Function for IP Rate Limiting ---
+async function checkAndIncrementIpRateLimit(ip: string): Promise<void> {
+    const logPrefix = '[RateLimit]';
+    if (!ip) {
+        console.warn(`${logPrefix} IP address is missing. Skipping rate limit check.`);
+        // Decide if you want to allow or deny requests without an IP.
+        // Allowing might be okay for internal/trusted calls, but risky otherwise.
+        return; // Allow for now, but consider throwing an error.
+    }
+
+    const rateLimitRef = db.collection('ipRateLimits').doc(ip);
+    const windowMillis = IP_RATE_LIMIT_WINDOW_SECONDS * 1000;
+
+    try {
+        await db.runTransaction(async (transaction) => {
+            const doc = await transaction.get(rateLimitRef);
+            const currentTimeMillis = Date.now(); // Get current time for comparison
+
+            if (!doc.exists) {
+                console.log(`${logPrefix} First request from IP: ${ip}. Creating record.`);
+                // First request from this IP in a while
+                transaction.set(rateLimitRef, {
+                    count: 1,
+                    // Store window start as milliseconds since epoch for easier comparison
+                    windowStartMillis: currentTimeMillis 
+                });
+                return; // Allowed
+            }
+
+            const data = doc.data();
+            const windowStartMillis = data?.windowStartMillis;
+            let currentCount = data?.count || 0;
+
+            if (!windowStartMillis || typeof windowStartMillis !== 'number') {
+                 console.warn(`${logPrefix} Invalid windowStartMillis for IP: ${ip}. Resetting.`);
+                 // Invalid data, reset
+                 transaction.set(rateLimitRef, { count: 1, windowStartMillis: currentTimeMillis });
+                 return; // Allow this request
+            }
+
+            // Check if the window has expired
+            if (currentTimeMillis - windowStartMillis > windowMillis) {
+                console.log(`${logPrefix} Rate limit window expired for IP: ${ip}. Resetting count.`);
+                // Window expired, reset count
+                transaction.update(rateLimitRef, { count: 1, windowStartMillis: currentTimeMillis });
+                return; // Allowed
+            }
+
+            // Window is still active, check count
+            if (currentCount >= IP_RATE_LIMIT_MAX_REQUESTS) {
+                console.warn(`${logPrefix} Rate limit exceeded for IP: ${ip}. Count: ${currentCount}`);
+                // Limit exceeded
+                throw new HttpsError(
+                    'resource-exhausted',
+                    `Too many requests from this IP address. Please try again in ${IP_RATE_LIMIT_WINDOW_SECONDS} seconds.`,
+                    { ip: ip } // Optional details
+                );
+            }
+
+            // Within limit, increment count
+            console.log(`${logPrefix} Incrementing count for IP: ${ip}. New count: ${currentCount + 1}`);
+            transaction.update(rateLimitRef, { count: FieldValue.increment(1) });
+            // Allowed
+        });
+        console.log(`${logPrefix} IP ${ip} is within rate limits.`);
+    } catch (error) {
+        if (error instanceof HttpsError) {
+            throw error; // Re-throw HttpsError (rate limit exceeded)
+        }
+        // Log other transaction errors but potentially allow the request?
+        // Or throw a generic internal error?
+        console.error(`${logPrefix} Error during rate limit transaction for IP ${ip}:`, error);
+        // Decide on behavior for transaction errors. Throwing is safer.
+        throw new HttpsError('internal', 'Failed to verify request rate limit.');
+    }
+}
+// --- End Helper Function ---
